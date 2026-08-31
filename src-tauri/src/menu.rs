@@ -8,6 +8,8 @@ use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const MENU_RUN_INSTALL_PLUGIN: &str = "run_install_plugin";
+const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
+const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
 const MENU_ABOUT_CHECK_UPDATE: &str = "about_check_update";
 const MENU_ABOUT_DSH_VERSION: &str = "about_dsh_version";
@@ -18,6 +20,15 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let run_submenu = SubmenuBuilder::new(app, "运行")
         .item(
             &MenuItemBuilder::with_id(MENU_RUN_INSTALL_PLUGIN, "安装插件…")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_EXPORT_CONFIG, "导出配置…")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_IMPORT_CONFIG, "导入配置…")
                 .build(app)?,
         )
         .build()?;
@@ -53,6 +64,27 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 /// Handle menu events by opening the tools window on the requested page.
 pub fn handle_menu_event(app: &AppHandle, id: &str) {
+    match id {
+        // Export/import config run directly (file dialogs), not via tools window.
+        MENU_RUN_EXPORT_CONFIG => {
+            let handle = app.clone();
+            std::thread::spawn(move || {
+                let result = crate::launcher::export_config(handle.clone());
+                show_config_result(&handle, result);
+            });
+            return;
+        }
+        MENU_RUN_IMPORT_CONFIG => {
+            let handle = app.clone();
+            std::thread::spawn(move || {
+                let result = crate::launcher::import_config(handle.clone());
+                show_config_result(&handle, result);
+            });
+            return;
+        }
+        _ => {}
+    }
+
     let page = match id {
         MENU_RUN_INSTALL_PLUGIN => "install-plugin",
         MENU_VIEW_LIST_PLUGINS => "list-plugins",
@@ -63,6 +95,24 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
     };
 
     open_tools_window(app, page);
+}
+
+/// Show the result of an export/import operation in a message dialog.
+fn show_config_result(app: &AppHandle, result: Result<String, String>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    match result {
+        Ok(msg) => {
+            let _ = app.dialog().message(msg).title("配置").blocking_show();
+        }
+        Err(e) => {
+            let _ = app
+                .dialog()
+                .message(e)
+                .title("配置")
+                .kind(MessageDialogKind::Error)
+                .blocking_show();
+        }
+    }
 }
 
 /// Open (or focus) the tools window and navigate it to the given page.

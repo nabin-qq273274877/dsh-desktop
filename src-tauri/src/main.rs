@@ -59,6 +59,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             launcher::start_dsh,
             launcher::get_dsh_url,
@@ -67,6 +68,8 @@ fn main() {
             launcher::list_plugins,
             launcher::install_plugin,
             launcher::remove_plugin,
+            launcher::export_config,
+            launcher::import_config,
             check_update,
             install_update,
             get_desktop_version

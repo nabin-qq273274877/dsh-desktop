@@ -115,6 +115,15 @@ fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Resolve the DSH home data directory (`<app-data>/dsh-desktop/dsh-home`).
+pub(crate) fn dsh_home_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    Ok(data_dir.join("dsh-desktop").join("dsh-home"))
+}
+
 /// Build a `Command` that runs `node pnpm.mjs dlx @deepseek-ai/dsh <args>`
 /// with the isolated pnpm store/cache/DSH-home env, suitable for one-shot
 /// subcommands (`--version`, `plugin --profile web add <pkg>`, ...).
@@ -422,4 +431,111 @@ pub fn remove_plugin(app: AppHandle, package: String) -> Result<String, String> 
         return Err("package name is empty".to_string());
     }
     run_dsh_command(&app, &["plugin", "--profile", "web", "remove", &pkg])
+}
+
+/// Export the DSH home directory to a zip archive chosen by the user.
+#[tauri::command]
+pub fn export_config(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let home = dsh_home_path(&app)?;
+    if !home.exists() {
+        return Err(format!("DSH 数据目录不存在: {}", home.display()));
+    }
+
+    // Ask the user where to save the archive.
+    let path = app
+        .dialog()
+        .file()
+        .add_filter("Zip 压缩包", &["zip"])
+        .set_file_name("dsh-config.zip")
+        .blocking_save_file();
+    let Some(path) = path else {
+        return Err("已取消".to_string());
+    };
+    let dest = path.into_path().map_err(|e| e.to_string())?;
+
+    // Zip the whole dsh-home directory into the destination file.
+    let file = std::fs::File::create(&dest).map_err(|e| format!("创建文件失败: {e}"))?;
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files(&home, &mut files)?;
+
+    for f in &files {
+        let rel = f.strip_prefix(&home).map_err(|e| e.to_string())?;
+        let name = rel.to_string_lossy().replace('\\', "/");
+        writer
+            .start_file(name, options)
+            .map_err(|e| format!("zip 写入失败: {e}"))?;
+        let data = std::fs::read(f).map_err(|e| format!("读取文件失败 {}: {e}", f.display()))?;
+        std::io::Write::write_all(&mut writer, &data).map_err(|e| e.to_string())?;
+    }
+    writer.finish().map_err(|e| format!("zip 完成失败: {e}"))?;
+
+    Ok(format!("配置已导出到:\n{}", dest.display()))
+}
+
+/// Import a previously-exported zip archive into the DSH home directory.
+#[tauri::command]
+pub fn import_config(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let home = dsh_home_path(&app)?;
+
+    // Ask the user to select the archive.
+    let path = app
+        .dialog()
+        .file()
+        .add_filter("Zip 压缩包", &["zip"])
+        .blocking_pick_file();
+    let Some(path) = path else {
+        return Err("已取消".to_string());
+    };
+    let src = path.into_path().map_err(|e| e.to_string())?;
+
+    // Ensure the target home dir exists.
+    std::fs::create_dir_all(&home).map_err(|e| format!("创建目录失败: {e}"))?;
+
+    let file = std::fs::File::open(&src).map_err(|e| format!("打开文件失败: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {e}"))?;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| format!("读取 zip 条目失败: {e}"))?;
+        let name = entry.name().to_string();
+        // Prevent path traversal.
+        let out_path = home.join(&name);
+        if !out_path.starts_with(&home) {
+            return Err(format!("非法路径: {name}"));
+        }
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path).map_err(|e| format!("创建目录失败: {e}"))?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+            }
+            let mut out_file =
+                std::fs::File::create(&out_path).map_err(|e| format!("创建文件失败: {e}"))?;
+            std::io::copy(&mut entry, &mut out_file)
+                .map_err(|e| format!("解压文件失败 {}: {e}", name))?;
+        }
+    }
+
+    Ok(format!("配置已导入到:\n{}", home.display()))
+}
+
+/// Recursively collect all files under `dir` into `out`.
+fn collect_files(dir: &PathBuf, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out)?;
+        } else if path.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
 }

@@ -6,7 +6,6 @@ const listen = __TAURI__.event.listen;
 const pages = {
   "install-plugin": document.getElementById("page-install-plugin"),
   "list-plugins": document.getElementById("page-list-plugins"),
-  "check-update": document.getElementById("page-check-update"),
   "dsh-version": document.getElementById("page-dsh-version"),
   "about": document.getElementById("page-about"),
 };
@@ -16,7 +15,6 @@ function showPage(name) {
     if (el) el.hidden = key !== name;
   }
   if (name === "list-plugins") refreshPlugins();
-  if (name === "check-update") loadDesktopVersion();
   if (name === "about") loadAboutVersion();
   if (name === "dsh-version") loadDshVersion();
 }
@@ -154,6 +152,8 @@ document.getElementById("btn-install")?.addEventListener("click", async () => {
   try {
     const res = await invoke("install_plugin", { package: name });
     setOutput(out, res || "安装完成", "ok");
+    // 安装成功后自动跳转到"已安装插件"页。
+    showPage("list-plugins");
   } catch (e) {
     setOutput(out, "安装失败: " + e, "err");
   }

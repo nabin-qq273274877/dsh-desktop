@@ -51,6 +51,11 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "resources/node": "node"
+    },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
     }
   },
   "plugins": {

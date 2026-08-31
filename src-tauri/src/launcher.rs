@@ -327,11 +327,27 @@ fn poll_ready(app: AppHandle) {
     }
 }
 
-/// Kill the DSH child process if it is still running.
+/// Kill the DSH child process (and its descendants) if still running.
 pub fn kill_dsh() {
     if let Some(mut child) = CHILD.lock().unwrap().take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        #[cfg(target_os = "windows")]
+        {
+            // Kill the whole process tree (DSH spawns cmd.exe / nested node),
+            // otherwise descendants leak after the app exits.
+            let pid = child.id();
+            let _ = Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
     *CURRENT_PORT.lock().unwrap() = None;
 }

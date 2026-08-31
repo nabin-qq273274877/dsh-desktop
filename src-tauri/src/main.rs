@@ -106,9 +106,30 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                // Ensure the DSH child process is terminated when the app exits.
-                launcher::kill_dsh();
+            match event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    // Ensure the DSH child process is terminated when the app exits.
+                    launcher::kill_dsh();
+                }
+                tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    // Kill DSH when the main window is closed/destroyed, so the
+                    // child process tree never leaks (even if the app keeps
+                    // running with other windows open).
+                    if label == "main" {
+                        match event {
+                            tauri::WindowEvent::CloseRequested { .. }
+                            | tauri::WindowEvent::Destroyed => {
+                                launcher::kill_dsh();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                tauri::RunEvent::Exit => {
+                    // Final fallback: ensure DSH is gone on any exit path.
+                    launcher::kill_dsh();
+                }
+                _ => {}
             }
         });
 }

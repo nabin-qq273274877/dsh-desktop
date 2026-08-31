@@ -345,6 +345,7 @@ pub fn kill_dsh() {
     if let Some(mut child) = CHILD.lock().unwrap().take() {
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
             // Kill the whole process tree asynchronously (DSH spawns cmd.exe /
             // nested node), otherwise descendants leak after the app exits.
             let pid = child.id();
@@ -352,6 +353,7 @@ pub fn kill_dsh() {
                 .args(["/T", "/F", "/PID", &pid.to_string()])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW: no console flash
                 .spawn(); // fire-and-forget; do NOT block the UI thread
             // Fallback kill of the direct child (non-blocking).
             let _ = child.kill();

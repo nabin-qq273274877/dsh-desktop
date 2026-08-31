@@ -2,9 +2,6 @@ name: release
 
 on:
   push:
-    branches:
-      - main
-      - master
     tags:
       - "v*"
 
@@ -12,7 +9,31 @@ permissions:
   contents: write
 
 jobs:
+  # 守卫：仅当 v* tag 指向 master 分支时，后续 job 才真正执行。
+  # 非 master 分支误打 tag 会被此守卫拦截，build 保持 skipped。
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      onMain: ${{ steps.check.outputs.onMain }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 拉取完整历史，确保 origin/master 可用
+
+      - name: Check tag points at master
+        id: check
+        run: |
+          if git merge-base --is-ancestor "$GITHUB_SHA" "origin/master"; then
+            echo "onMain=true" >> "$GITHUB_OUTPUT"
+            echo "tag $GITHUB_REF_NAME is on master"
+          else
+            echo "onMain=false" >> "$GITHUB_OUTPUT"
+            echo "tag $GITHUB_REF_NAME is NOT on master; skipping release"
+          fi
+
   build:
+    needs: guard
+    if: needs.guard.outputs.onMain == 'true'
     strategy:
       fail-fast: false
       matrix:

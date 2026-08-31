@@ -43,13 +43,13 @@ if (!isMain) {
   // When DSH is ready, open the main window and hide the loading window.
   listen("dsh-ready", async (event) => {
     const url = event.payload || "http://127.0.0.1:3080";
+    appendLog(`[ready] DSH 已就绪: ${url}`, "line-ok");
     appendLog("[ready] 正在打开主窗口…", "line-ok");
 
     const mainWin = WebviewWindow.getByLabel("main");
     if (mainWin) {
-      // Point the main window's webview at the embedded DSH URL.
-      await invoke("plugin:webview|navigate", { url });
       await mainWin.show();
+      await mainWin.setFocus();
     }
     await win.hide();
   });
@@ -72,11 +72,26 @@ if (!isMain) {
 // ---------- main window behavior ----------
 if (isMain) {
   // The main window renders an iframe pointed at the embedded DSH web app.
-  // We set the iframe src from the URL passed by the loading window via the
-  // storage/localStorage bridge below.
+  // The URL is resolved from the backend (the dynamically chosen port).
   const frame = document.createElement("iframe");
   frame.className = "dsh-frame";
-  frame.src = "http://127.0.0.1:3080";
   frame.allow = "clipboard-read; clipboard-write";
   document.body.appendChild(frame);
+
+  async function loadDsh() {
+    try {
+      const url = await invoke("get_dsh_url");
+      if (url && url !== "http://127.0.0.1:0") {
+        frame.src = url;
+      }
+    } catch (e) {
+      // DSH not ready yet; retry shortly.
+    }
+  }
+
+  loadDsh();
+
+  // The port is fixed once chosen; re-check in case the main window opened
+  // before the backend finished choosing the port.
+  setTimeout(loadDsh, 500);
 }

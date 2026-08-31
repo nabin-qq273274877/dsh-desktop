@@ -6,6 +6,7 @@
 //! with dedicated threads reading the piped stdout/stderr line by line.
 
 use std::io::{BufRead, BufReader};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,14 +14,35 @@ use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-/// The DSH web URL we wait for and then embed in the main window.
-const DSH_URL: &str = "http://127.0.0.1:3080";
+/// The host DSH binds to. We bind to loopback only for local use.
+const DSH_HOST: &str = "127.0.0.1";
 
 /// Global handle to the running child process so we can kill it on exit.
 static CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 /// Whether DSH has been detected as ready (guards against duplicate launches).
 static READY: AtomicBool = AtomicBool::new(false);
+
+/// The dynamically chosen port for the current DSH run.
+static CURRENT_PORT: Mutex<Option<u16>> = Mutex::new(None);
+
+/// Find a free TCP port by binding to `127.0.0.1:0` and letting the OS choose.
+fn find_free_port() -> Result<u16, String> {
+    let listener = TcpListener::bind((DSH_HOST, 0u16))
+        .map_err(|e| format!("failed to find a free port: {e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("failed to read assigned port: {e}"))?
+        .port();
+    // Dropping the listener releases the port back to the OS for DSH to grab.
+    drop(listener);
+    Ok(port)
+}
+
+/// The DSH web URL for the currently chosen port.
+fn dsh_url(port: u16) -> String {
+    format!("http://{DSH_HOST}:{port}")
+}
 
 /// Resolve the path to the bundled Node binary.
 ///
@@ -72,7 +94,8 @@ fn emit_log(app: &AppHandle, line: &str) {
 
 /// Notify the frontend that DSH is ready and the main window should open.
 fn emit_ready(app: &AppHandle) {
-    let _ = app.emit("dsh-ready", DSH_URL.to_string());
+    let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
+    let _ = app.emit("dsh-ready", dsh_url(port));
 }
 
 /// Start the DSH child process using the bundled Node binary and stream logs.
@@ -83,6 +106,10 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
 
     let node_path = bundled_node_path(app)?;
     let npx_cli = bundled_npx_path(&node_path)?;
+
+    // Choose a free port so we never collide with a fixed port already in use.
+    let port = find_free_port()?;
+    *CURRENT_PORT.lock().unwrap() = Some(port);
 
     // Use an isolated cache/prefix so we never touch the user's system npm.
     // Named "dsh-desktop" for easy discovery when debugging.
@@ -96,7 +123,7 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     emit_log(
         app,
         &format!(
-            "$ npx -y --verbose @deepseek-ai/dsh web --no-open\n   (node: {})\n   (npx: {})",
+            "$ npx -y --verbose @deepseek-ai/dsh web --port {port} --no-open\n   (node: {})\n   (npx: {})",
             node_path.display(),
             npx_cli.display()
         ),
@@ -104,7 +131,10 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
 
     let mut cmd = Command::new(&node_path);
     cmd.arg(&npx_cli)
-        .args(["-y", "--verbose", "@deepseek-ai/dsh", "web", "--no-open"])
+        .args(["-y", "--verbose", "@deepseek-ai/dsh", "web"])
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--no-open")
         .env("npm_config_cache", &npm_cache)
         .env("npm_config_prefix", &npm_prefix)
         .env("NODE_ENV", "production")
@@ -155,12 +185,15 @@ fn stream_lines(app: AppHandle, stream: impl std::io::Read + Send + 'static) {
     }
 }
 
-/// Poll `http://127.0.0.1:3080` until it returns 200, then signal readiness.
+/// Poll the DSH web URL until it returns 200, then signal readiness.
 fn poll_ready(app: AppHandle) {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
         .ok();
+
+    let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
+    let url = dsh_url(port);
 
     let mut attempts = 0u32;
     loop {
@@ -168,16 +201,16 @@ fn poll_ready(app: AppHandle) {
         std::thread::sleep(std::time::Duration::from_millis(800));
 
         if let Some(client) = &client {
-            match client.get(DSH_URL).send() {
+            match client.get(&url).send() {
                 Ok(resp) if resp.status().is_success() => {
                     READY.store(true, Ordering::SeqCst);
-                    emit_log(&app, "[ready] DSH web server is up");
+                    emit_log(&app, &format!("[ready] DSH web server is up at {url}"));
                     emit_ready(&app);
                     return;
                 }
                 _ => {
                     if attempts % 5 == 0 {
-                        emit_log(&app, "[waiting] DSH web server not ready yet...");
+                        emit_log(&app, &format!("[waiting] {url} not ready yet..."));
                     }
                 }
             }
@@ -191,6 +224,7 @@ pub fn kill_dsh() {
         let _ = child.kill();
         let _ = child.wait();
     }
+    *CURRENT_PORT.lock().unwrap() = None;
 }
 
 /// Tauri command: frontend can request a (re)start of the DSH launch flow.
@@ -199,4 +233,11 @@ pub fn start_dsh(app: AppHandle) -> Result<(), String> {
     READY.store(false, Ordering::SeqCst);
     kill_dsh();
     launch_dsh(&app)
+}
+
+/// Tauri command: return the current DSH web URL (for the main window to embed).
+#[tauri::command]
+pub fn get_dsh_url() -> String {
+    let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
+    dsh_url(port)
 }

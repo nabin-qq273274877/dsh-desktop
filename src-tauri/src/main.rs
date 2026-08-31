@@ -9,7 +9,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![launcher::start_dsh])
+        .invoke_handler(tauri::generate_handler![launcher::start_dsh, launcher::get_dsh_url])
         .setup(|app| {
             // Spawn the DSH launch flow as soon as the loading window is ready.
             let handle = app.handle().clone();

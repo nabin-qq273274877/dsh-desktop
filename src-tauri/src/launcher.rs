@@ -525,12 +525,18 @@ pub fn import_config(app: AppHandle) -> Result<String, String> {
     Ok(format!("配置已导入到:\n{}", home.display()))
 }
 
-/// Recursively collect all files under `dir` into `out`.
+/// Recursively collect all files under `dir` into `out`, skipping
+/// `node_modules` directories (dependencies are rebuildable via pnpm).
 fn collect_files(dir: &PathBuf, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "node_modules" || name == ".pnpm" {
+            // Skip dependency directories (rebuildable, huge).
+            continue;
+        }
         if path.is_dir() {
             collect_files(&path, out)?;
         } else if path.is_file() {

@@ -178,7 +178,8 @@ document.getElementById("btn-check-update")?.addEventListener("click", async () 
       setOutput(out, "无可用更新,已是最新版本", "");
     }
   } catch (e) {
-    setOutput(out, "检查更新失败: " + e, "err");
+    // Any check failure is treated as "no update available".
+    setOutput(out, "无可用更新,已是最新版本", "");
   }
 });
 

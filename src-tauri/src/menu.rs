@@ -42,10 +42,6 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     let about_submenu = SubmenuBuilder::new(app, "关于")
         .item(
-            &MenuItemBuilder::with_id(MENU_ABOUT_CHECK_UPDATE, "检查更新…")
-                .build(app)?,
-        )
-        .item(
             &MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "DSH 版本")
                 .build(app)?,
         )
@@ -67,19 +63,16 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
     match id {
         // Export/import config run directly (file dialogs), not via tools window.
         MENU_RUN_EXPORT_CONFIG => {
-            let handle = app.clone();
-            std::thread::spawn(move || {
-                let result = crate::launcher::export_config(handle.clone());
-                show_config_result(&handle, result);
-            });
+            // Dialog APIs must run on the main thread. The zip packing happens
+            // synchronously here (the config is small once node_modules is
+            // excluded); a large data set would need a different approach.
+            let result = crate::launcher::export_config(app.clone());
+            show_config_result(app, result);
             return;
         }
         MENU_RUN_IMPORT_CONFIG => {
-            let handle = app.clone();
-            std::thread::spawn(move || {
-                let result = crate::launcher::import_config(handle.clone());
-                show_config_result(&handle, result);
-            });
+            let result = crate::launcher::import_config(app.clone());
+            show_config_result(app, result);
             return;
         }
         _ => {}

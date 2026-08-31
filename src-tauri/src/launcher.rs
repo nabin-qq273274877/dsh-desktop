@@ -337,25 +337,30 @@ fn poll_ready(app: AppHandle) {
 }
 
 /// Kill the DSH child process (and its descendants) if still running.
+///
+/// This is intentionally non-blocking: it must be callable from window-close
+/// and exit handlers without freezing the UI. The process tree is terminated
+/// in the background via `taskkill /T /F`.
 pub fn kill_dsh() {
     if let Some(mut child) = CHILD.lock().unwrap().take() {
         #[cfg(target_os = "windows")]
         {
-            // Kill the whole process tree (DSH spawns cmd.exe / nested node),
-            // otherwise descendants leak after the app exits.
+            // Kill the whole process tree asynchronously (DSH spawns cmd.exe /
+            // nested node), otherwise descendants leak after the app exits.
             let pid = child.id();
             let _ = Command::new("taskkill")
                 .args(["/T", "/F", "/PID", &pid.to_string()])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status();
+                .spawn(); // fire-and-forget; do NOT block the UI thread
+            // Fallback kill of the direct child (non-blocking).
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.try_wait();
         }
         #[cfg(not(target_os = "windows"))]
         {
             let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.try_wait();
         }
     }
     *CURRENT_PORT.lock().unwrap() = None;

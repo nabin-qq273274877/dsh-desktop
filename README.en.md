@@ -96,9 +96,11 @@ src-tauri/resources/node/pnpm/
 
 ## Auto-update configuration
 
-Before releasing, set in `src-tauri/tauri.conf.json`:
+Repository: [nabin-qq273274877/dsh-desktop](https://github.com/nabin-qq273274877/dsh-desktop).
 
-1. `plugins.updater.endpoints` → your GitHub repo's `latest.json` URL (replace `<OWNER>` / `<REPO>`).
+Already configured in `src-tauri/tauri.conf.json`:
+
+1. `plugins.updater.endpoints` → `https://github.com/nabin-qq273274877/dsh-desktop/releases/latest/download/latest.json`
 2. `plugins.updater.pubkey` → the public key from `tauri signer generate`. Store the private key as the `TAURI_SIGNING_PRIVATE_KEY` secret in your GitHub repository.
 
 Tag a release with `vX.Y.Z` and push; the workflow builds and publishes the installers and update manifest automatically.

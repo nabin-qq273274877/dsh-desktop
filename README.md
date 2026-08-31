@@ -96,9 +96,11 @@ src-tauri/resources/node/pnpm/
 
 ## 自动更新配置
 
-发布前,在 `src-tauri/tauri.conf.json` 中设置:
+仓库: [nabin-qq273274877/dsh-desktop](https://github.com/nabin-qq273274877/dsh-desktop)。
 
-1. `plugins.updater.endpoints` → 你的 GitHub 仓库的 `latest.json` URL(替换 `<OWNER>` / `<REPO>`)。
+发布前,在 `src-tauri/tauri.conf.json` 中已配置好:
+
+1. `plugins.updater.endpoints` → `https://github.com/nabin-qq273274877/dsh-desktop/releases/latest/download/latest.json`
 2. `plugins.updater.pubkey` → `tauri signer generate` 生成的公钥。私钥需作为 `TAURI_SIGNING_PRIVATE_KEY` secret 存入 GitHub 仓库。
 
 打一个 `vX.Y.Z` 的 tag 并 push,工作流会自动构建并发布安装包和更新清单。

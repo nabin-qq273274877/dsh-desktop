@@ -11,6 +11,7 @@ const MENU_RUN_INSTALL_PLUGIN: &str = "run_install_plugin";
 const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
 const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
+const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
 const MENU_ABOUT_CHECK_UPDATE: &str = "about_check_update";
 const MENU_ABOUT_DSH_VERSION: &str = "about_dsh_version";
 const MENU_ABOUT_DESKTOP: &str = "about_desktop";
@@ -38,11 +39,16 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItemBuilder::with_id(MENU_VIEW_LIST_PLUGINS, "已安装插件")
                 .build(app)?,
         )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_DEVTOOLS, "调试工具")
+                .build(app)?,
+        )
         .build()?;
 
     let about_submenu = SubmenuBuilder::new(app, "关于")
         .item(
-            &MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "DSH 版本")
+            &MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "DeepSeek Harness 版本")
                 .build(app)?,
         )
         .item(
@@ -73,6 +79,10 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         MENU_RUN_IMPORT_CONFIG => {
             let result = crate::launcher::import_config(app.clone());
             show_config_result(app, result);
+            return;
+        }
+        MENU_VIEW_DEVTOOLS => {
+            toggle_devtools(app);
             return;
         }
         _ => {}
@@ -108,12 +118,27 @@ fn show_config_result(app: &AppHandle, result: Result<String, String>) {
     }
 }
 
+/// Toggle the DevTools inspector on the main window (if present).
+///
+/// Called from the "查看 > 调试工具" menu item.
+pub fn toggle_devtools(app: &AppHandle) {
+    if let Some(main_win) = app.get_webview_window("main") {
+        if main_win.is_devtools_open() {
+            main_win.close_devtools();
+        } else {
+            main_win.open_devtools();
+        }
+    }
+}
+
 /// Open (or focus) the tools window and navigate it to the given page.
 fn open_tools_window(app: &AppHandle, page: &str) {
     // Reuse an existing tools window if present.
     if let Some(win) = app.get_webview_window("tools") {
         let _ = win.show();
         let _ = win.set_focus();
+        // Non-main windows should not be maximizable.
+        let _ = win.set_maximizable(false);
         // Tell the frontend which page to show.
         let _ = app.emit("tools-page", page.to_string());
         return;
@@ -124,6 +149,7 @@ fn open_tools_window(app: &AppHandle, page: &str) {
         .title("DeepSeek Harness Desktop 工具")
         .inner_size(560.0, 560.0)
         .resizable(true)
+        .maximizable(false)
         .center();
 
     if let Ok(win) = builder.build() {

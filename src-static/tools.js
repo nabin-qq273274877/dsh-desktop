@@ -43,10 +43,10 @@ async function loadAboutVersion() {
 
 async function loadDshVersion() {
   const el = document.getElementById("dsh-version-out");
-  setOutput(el, "正在获取 DSH 版本…");
+  setOutput(el, "正在获取 DeepSeek Harness 版本…");
   try {
     const v = await invoke("get_dsh_version");
-    setOutput(el, "DSH 版本: " + v, "ok");
+    setOutput(el, "DeepSeek Harness 版本: " + v, "ok");
   } catch (e) {
     setOutput(el, "获取失败: " + e, "err");
   }

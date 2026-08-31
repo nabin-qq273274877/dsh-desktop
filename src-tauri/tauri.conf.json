@@ -34,6 +34,7 @@
         "url": "index.html"
       }
     ],
+    "withGlobalTauri": true,
     "security": {
       "csp": null
     }

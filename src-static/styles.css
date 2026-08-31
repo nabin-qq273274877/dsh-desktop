@@ -46,19 +46,16 @@ body[data-window="loading"] {
 }
 
 .logo {
-  width: 72px;
-  height: 72px;
+  width: 88px;
+  height: 88px;
   margin: 0 auto 12px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 20px;
+  background: #1b2130;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
-  font-weight: 700;
-  color: #fff;
-  letter-spacing: -0.5px;
-  box-shadow: 0 8px 24px rgba(79, 140, 255, 0.35);
+  color: #7ea7ff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .brand-title {
@@ -128,6 +125,14 @@ body[data-window="loading"] {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--muted);
+}
+
+.version {
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.7;
 }
 
 /* ---------- main window (embedded DSH) ---------- */

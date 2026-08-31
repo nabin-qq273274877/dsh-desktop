@@ -1,0 +1,19 @@
+# Rust / target
+target/
+src-tauri/target/
+
+# Node
+node_modules/
+
+# Tauri generated
+src-tauri/gen/
+src-tauri/icons/*.png
+src-tauri/icons/*.icns
+src-tauri/icons/*.ico
+
+# Bundled Node runtime (large binary; fetched separately)
+src-tauri/resources/node/
+
+# OS
+.DS_Store
+Thumbs.db

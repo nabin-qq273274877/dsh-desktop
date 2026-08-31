@@ -1,0 +1,18 @@
+[package]
+name = "dsh-desktop"
+version = "0.1.0"
+description = "A desktop launcher for DeepSeek Harness (DSH)"
+authors = ["you"]
+edition = "2021"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-updater = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }

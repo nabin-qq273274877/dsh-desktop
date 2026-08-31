@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DSH Desktop</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-window="loading">
+  <main class="loading-wrap">
+    <header class="brand">
+      <div class="logo" aria-hidden="true">DSh</div>
+      <h1 class="brand-title">DeepSeek Harness</h1>
+      <p class="brand-sub">正在启动桌面客户端…</p>
+    </header>
+
+    <section class="log-box" aria-live="polite">
+      <pre id="log" class="log"></pre>
+    </section>
+
+    <footer class="actions">
+      <button id="btn-retry" class="btn" type="button">重试启动</button>
+      <button id="btn-cancel" class="btn btn-ghost" type="button">退出</button>
+    </footer>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

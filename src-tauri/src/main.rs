@@ -4,6 +4,7 @@
 mod launcher;
 mod menu;
 
+use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
 /// Check for updates via the configured updater endpoints.
@@ -75,23 +76,24 @@ fn main() {
             get_desktop_version
         ])
         .setup(|app| {
-            // Build and set the native app menu (运行 / 关于).
+            // Build the native menu and attach it ONLY to the main window.
+            // Loading/tools windows get no menu bar.
             let handle = app.handle().clone();
             match menu::build_menu(&handle) {
                 Ok(m) => {
-                    let _ = app.set_menu(m);
+                    if let Some(main_win) = app.get_webview_window("main") {
+                        let _ = main_win.set_menu(m);
+                    }
                 }
                 Err(e) => {
                     eprintln!("failed to build menu: {e}");
                 }
             }
 
-            // Handle menu events.
-            let handle = app.handle().clone();
-            app.on_menu_event(move |app, event| {
+            // Handle menu events (app-level; fires for the main window menu).
+            app.on_menu_event(|app, event| {
                 let id = event.id().0.as_str().to_string();
                 menu::handle_menu_event(app, &id);
-                let _ = &handle;
             });
 
             // NOTE: DSH launch is NOT started here. The frontend drives the

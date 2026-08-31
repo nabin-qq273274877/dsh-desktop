@@ -32,14 +32,9 @@ function classify(line) {
 if (!isMain) {
   appendLog("正在初始化…", "");
 
-  // Show the real app version (from the Tauri app metadata).
-  try {
-    const ver = __TAURI__.app.getVersion();
-    const el = document.getElementById("version-line");
-    if (el && ver) el.textContent = `DSH Desktop v${ver}`;
-  } catch (e) {
-    // fall back to the static text already in the HTML
-  }
+  const retryBtn = document.getElementById("btn-retry");
+  // Retry button starts disabled; it is only enabled when startup fails.
+  if (retryBtn) retryBtn.disabled = true;
 
   // Register log listeners before anything else so no lines are missed.
   listen("dsh-log", (event) => {
@@ -57,50 +52,27 @@ if (!isMain) {
     }
   });
 
-  // Flow: (1) check update -> (2) auto-install if found -> (3) else start DSH.
-  async function boot() {
-    appendLog("[update] 正在检查更新…", "");
-    let latest = null;
-    try {
-      latest = await invoke("check_update");
-    } catch (e) {
-      // Treat any check failure as "no update available" (never disturb startup).
-      latest = null;
-    }
-
-    if (latest) {
-      appendLog(`[update] 发现新版本 v${latest},正在下载更新…`, "line-ok");
-      appendLog("[update] 更新完成后应用会自动重启,请稍候…", "");
-      try {
-        await invoke("install_update");
-        // On success the app relaunches; we may never reach here.
-        appendLog("[update] 更新已安装,正在重启…", "line-ok");
-        return;
-      } catch (e) {
-        appendLog(`[update] 更新失败(将直接启动当前版本)`, "line-err");
-        // fall through to start DSH with the current version
-      }
-    } else {
-      appendLog("[update] 无可用更新", "");
-    }
-
-    await startDsh();
-  }
-
   async function startDsh() {
     appendLog("正在启动 DSH…", "");
+    if (retryBtn) retryBtn.disabled = true;
     try {
       await invoke("start_dsh");
+      // Note: a successful spawn does not mean "ready" — readiness is signalled
+      // asynchronously via the `dsh-ready` event.
     } catch (e) {
       appendLog(`[error] 启动 DSH 失败: ${e}`, "line-err");
+      // Enable retry on failure.
+      if (retryBtn) retryBtn.disabled = false;
     }
   }
 
-  // Kick off the boot sequence once listeners are registered.
-  boot();
+  // No version check / update check here: updates are handled from the
+  // "关于" menu. Just start DSH immediately so loading is never blocked.
+  startDsh();
 
   document.getElementById("btn-retry")?.addEventListener("click", async () => {
     if (logEl) logEl.innerHTML = "";
+    appendLog("正在重启 DSH…", "");
     await startDsh();
   });
 

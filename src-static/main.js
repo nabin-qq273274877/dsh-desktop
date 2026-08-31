@@ -64,7 +64,8 @@ if (!isMain) {
     try {
       latest = await invoke("check_update");
     } catch (e) {
-      appendLog(`[update] 检查更新失败(将直接启动): ${e}`, "");
+      // Treat any check failure as "no update available" (never disturb startup).
+      latest = null;
     }
 
     if (latest) {
@@ -76,11 +77,11 @@ if (!isMain) {
         appendLog("[update] 更新已安装,正在重启…", "line-ok");
         return;
       } catch (e) {
-        appendLog(`[update] 更新失败(将直接启动当前版本): ${e}`, "line-err");
+        appendLog(`[update] 更新失败(将直接启动当前版本)`, "line-err");
         // fall through to start DSH with the current version
       }
     } else {
-      appendLog("[update] 已是最新版本", "");
+      appendLog("[update] 无可用更新", "");
     }
 
     await startDsh();

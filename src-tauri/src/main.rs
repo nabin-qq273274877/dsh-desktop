@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod launcher;
+mod menu;
 
 use tauri_plugin_updater::UpdaterExt;
 
@@ -48,6 +49,12 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Return the desktop app version (from the package info).
+#[tauri::command]
+fn get_desktop_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -56,16 +63,38 @@ fn main() {
             launcher::start_dsh,
             launcher::get_dsh_url,
             launcher::get_log_history,
+            launcher::get_dsh_version,
+            launcher::list_plugins,
+            launcher::install_plugin,
             check_update,
-            install_update
+            install_update,
+            get_desktop_version
         ])
         .setup(|app| {
-            // NOTE: DSH launch is NOT started here. The frontend now drives the
+            // Build and set the native app menu (运行 / 关于).
+            let handle = app.handle().clone();
+            match menu::build_menu(&handle) {
+                Ok(m) => {
+                    let _ = app.set_menu(m);
+                }
+                Err(e) => {
+                    eprintln!("failed to build menu: {e}");
+                }
+            }
+
+            // Handle menu events.
+            let handle = app.handle().clone();
+            app.on_menu_event(move |app, event| {
+                let id = event.id().0.as_str().to_string();
+                menu::handle_menu_event(app, &id);
+                let _ = &handle;
+            });
+
+            // NOTE: DSH launch is NOT started here. The frontend drives the
             // flow: it first checks for updates (auto-installs if found), then
             // calls `start_dsh` only when no update is pending. This avoids the
             // previous race where the backend launched DSH before the frontend
             // was ready to receive logs.
-            let _ = app;
             Ok(())
         })
         .build(tauri::generate_context!())

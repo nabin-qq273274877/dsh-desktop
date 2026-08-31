@@ -52,7 +52,7 @@ fn dsh_url(port: u16) -> String {
 /// At runtime this lives under the app's resource directory. In a packaged
 /// build the resource maps to `<resource_dir>/node/`; in dev mode the raw
 /// source layout `<src-tauri>/resources/node/` is used. We try both.
-fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -113,6 +113,48 @@ fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
         return Err(format!("bundled pnpm not found at {}", path.display()));
     }
     Ok(path)
+}
+
+/// Build a `Command` that runs `node pnpm.mjs dlx @deepseek-ai/dsh <args>`
+/// with the isolated pnpm store/cache/DSH-home env, suitable for one-shot
+/// subcommands (`--version`, `plugin --profile web add <pkg>`, ...).
+pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, String> {
+    let node_path = bundled_node_path(app)?;
+    let pnpm_path = bundled_pnpm_path(&node_path)?;
+
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let dsh_dir = data_dir.join("dsh-desktop");
+    let pnpm_store = dsh_dir.join("store");
+    let dsh_home = dsh_dir.join("dsh-home");
+
+    let mut cmd = Command::new(&node_path);
+    cmd.arg(&pnpm_path)
+        .arg("--reporter=append-only")
+        .arg("dlx")
+        .arg("@deepseek-ai/dsh");
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.env("PNPM_HOME", &dsh_dir)
+        .env("npm_config_store_dir", &pnpm_store)
+        .env("npm_config_cache", &dsh_dir.join("cache"))
+        .env("DSH_HOME", &dsh_home)
+        .env("HOME", &dsh_home)
+        .env("npm_config_registry", "https://registry.npmmirror.com")
+        .env("NODE_ENV", "production")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+
+    Ok(cmd)
 }
 
 /// Emit a single log line to the loading window, and buffer it for replay.
@@ -314,4 +356,44 @@ pub fn get_dsh_url() -> String {
 #[tauri::command]
 pub fn get_log_history() -> Vec<String> {
     LOG_HISTORY.lock().unwrap().clone()
+}
+
+/// Run a one-shot DSH subcommand and return its combined stdout+stderr.
+fn run_dsh_command(app: &AppHandle, args: &[&str]) -> Result<String, String> {
+    let output = dsh_subcommand(app, args)?
+        .output()
+        .map_err(|e| format!("failed to run dsh: {e}"))?;
+    let mut combined = String::new();
+    combined.push_str(&String::from_utf8_lossy(&output.stdout));
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        return Err(if combined.trim().is_empty() {
+            format!("command exited with status {}", output.status)
+        } else {
+            combined.trim().to_string()
+        });
+    }
+    Ok(combined)
+}
+
+/// Tauri command: return the DSH version string (`dsh --version`).
+#[tauri::command]
+pub fn get_dsh_version(app: AppHandle) -> Result<String, String> {
+    run_dsh_command(&app, &["--version"]).map(|s| s.trim().to_string())
+}
+
+/// Tauri command: list installed plugins (`dsh plugin --profile web list`).
+#[tauri::command]
+pub fn list_plugins(app: AppHandle) -> Result<String, String> {
+    run_dsh_command(&app, &["plugin", "--profile", "web", "list"])
+}
+
+/// Tauri command: install a plugin by package name.
+#[tauri::command]
+pub fn install_plugin(app: AppHandle, package: String) -> Result<String, String> {
+    let pkg = package.trim().to_string();
+    if pkg.is_empty() {
+        return Err("package name is empty".to_string());
+    }
+    run_dsh_command(&app, &["plugin", "--profile", "web", "add", &pkg])
 }

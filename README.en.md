@@ -16,6 +16,21 @@ It wraps DSH in a native desktop client with a custom loading screen, live start
 - **Automatic updates** — `tauri-plugin-updater` checks GitHub Releases.
 - **CI builds** — GitHub Actions produces Windows (NSIS) and macOS (dmg) installers on every version tag.
 
+## Why not Electron
+
+This project uses **Tauri 2.x** instead of Electron for these reasons:
+
+| Aspect | Tauri 2.x | Electron |
+|---|---|---|
+| Memory usage | ~30–80 MB | ~150–250 MB |
+| Installer size | ~30 MB (incl. bundled Node + pnpm) | ~100 MB+ (excl. bundled runtime) |
+| Rendering engine | Reuses system WebView (WebView2 / WKWebView) | Bundles a full Chromium per app |
+| Backend language | Rust | Node.js |
+| Auto-update | `tauri-plugin-updater` (official) | `electron-updater` (mature) |
+| CI packaging | `tauri-action` (official) | `electron-builder` (mature) |
+
+For a **launcher**, the core needs are lightweight, fast startup, and low memory — not shipping a full browser. Tauri reuses the system's existing WebView, cutting footprint and memory to under a third of Electron, while still offering first-class official support for **auto-update** and **cross-platform CI packaging** — exactly what this project requires. The only trade-off is writing the backend in Rust, which is well worth it for a significantly smaller desktop launcher.
+
 ## Launch command
 
 The exact command run against the bundled Node + pnpm:

@@ -16,6 +16,21 @@
 - **自动更新** —— `tauri-plugin-updater` 检查 GitHub Releases。
 - **CI 打包** —— GitHub Actions 在版本 tag 上自动产出 Windows (NSIS) 和 macOS (dmg) 安装包。
 
+## 为什么不使用 Electron
+
+本项目选用 **Tauri 2.x** 而非 Electron,主要基于以下考量:
+
+| 维度 | Tauri 2.x | Electron |
+|---|---|---|
+| 内存占用 | ~30–80 MB | ~150–250 MB |
+| 安装包体积 | ~30 MB(含内置 Node + pnpm) | ~100 MB+(不含内置运行时) |
+| 渲染内核 | 复用系统 WebView(WebView2 / WKWebView) | 每个应用内置完整 Chromium |
+| 后端语言 | Rust | Node.js |
+| 自动更新 | `tauri-plugin-updater` 官方支持 | `electron-updater`(成熟) |
+| CI 打包 | `tauri-action` 官方支持 | `electron-builder`(成熟) |
+
+对一个「启动器」而言,核心诉求是**轻量、启动快、内存占用低**,而不是承载一个完整浏览器。Tauri 复用系统已有的 WebView,把体积和内存降到 Electron 的 1/3 以下,同时官方对**自动更新**和 **CI 双平台打包**都是一等支持,正好覆盖本项目的全部硬需求。唯一代价是后端需用 Rust,但换来的是显著更小的资源占用,对桌面启动器更合适。
+
 ## 启动命令
 
 实际执行的内置 Node + pnpm 命令:

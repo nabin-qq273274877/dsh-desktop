@@ -24,24 +24,27 @@ machine.
 
 ## Launch command
 
-The exact command run against the bundled Node:
+The exact command run against the bundled Node + pnpm:
 
 ```
-npx -y --verbose @deepseek-ai/dsh web --port <free-port> --no-open
+pnpm dlx @deepseek-ai/dsh web --port <free-port> --no-open
 ```
 
 The port is chosen automatically at runtime (an OS-assigned free port bound to
 `127.0.0.1`), so a fixed port collision never blocks startup. The DSH web UI is
 then navigated to directly in the app's main window at that dynamic address.
 
-To speed up first-time installs, the bundled npm uses the npmmirror registry
-(`https://registry.npmmirror.com`). Its cache/prefix are isolated under a
-single per-user data directory so the system npm is never touched:
+The bundled Node (22.13.0 LTS) runs a bundled pnpm (`pnpm/bin/pnpm.mjs`) via
+`pnpm dlx`, which gives hard-linked, cached installs — much faster than `npx`
+for DSH's large monorepo dependency tree. To speed up first-time installs, the
+registry is npmmirror (`https://registry.npmmirror.com`). All pnpm state is
+isolated under a single per-user data directory so the system pnpm/npm is never
+touched:
 
 ```
 <app-data-dir>/dsh-desktop/
-├── cache/    # npm cache
-└── prefix/   # npm global prefix
+├── cache/    # pnpm cache
+└── store/    # pnpm content-addressable store (hard-linked)
 ```
 
 ## Requirements (to build)
@@ -75,10 +78,18 @@ src-tauri/resources/node/
 - **Windows**: `node/node.exe`, `node/node_modules/npm/bin/npx-cli.js`, ...
 - **macOS**: `node/bin/node`, `node/lib/node_modules/npm/bin/npx-cli.js`, ...
 
-> Note: use the standard official Node distribution layout (which includes npm
-> under `node_modules/npm` on Windows and `lib/node_modules/npm` on macOS).
-> The launcher resolves the bundled `node(.exe)` and the bundled npm
-> `npx-cli.js` relative to it.
+And pnpm beside it (run via `node pnpm/bin/pnpm.mjs`):
+
+```
+src-tauri/resources/node/pnpm/
+├── bin/pnpm.mjs
+├── dist/          # bundled pnpm runtime
+└── package.json
+```
+
+> The launcher resolves the bundled `node(.exe)` and `pnpm/bin/pnpm.mjs`
+> relative to the resource dir. The GitHub Actions workflow downloads both
+> automatically.
 
 The `tauri.conf.json` `bundle.resources.node` mapping already includes this
 directory, and the Rust launcher resolves `node(.exe)` relative to it.

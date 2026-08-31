@@ -96,23 +96,18 @@ fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
     ))
 }
 
-/// Resolve the npm npx CLI shipped with the Node distribution.
+/// Resolve the bundled pnpm entry script (`bin/pnpm.mjs`).
 ///
-/// Layout differs between platforms:
-///   Windows: node/node_modules/npm/bin/npx-cli.js
-///   macOS:   node/lib/node_modules/npm/bin/npx-cli.js
-fn bundled_npx_path(node_path: &PathBuf) -> Result<PathBuf, String> {
-    #[cfg(target_os = "windows")]
-    let npm_rel = ["node_modules", "npm", "bin", "npx-cli.js"];
-    #[cfg(not(target_os = "windows"))]
-    let npm_rel = ["lib", "node_modules", "npm", "bin", "npx-cli.js"];
-
+/// pnpm is placed beside the Node distribution at `<node_dir>/pnpm/bin/pnpm.mjs`
+/// and run via the bundled Node (`node pnpm.mjs dlx ...`). This avoids relying on
+/// Node's built-in npm/npx and gives faster, hard-linked installs.
+fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
     let mut path = node_path.parent().unwrap().to_path_buf();
-    for seg in npm_rel {
-        path.push(seg);
-    }
+    path.push("pnpm");
+    path.push("bin");
+    path.push("pnpm.mjs");
     if !path.exists() {
-        return Err(format!("bundled npm npx-cli not found at {}", path.display()));
+        return Err(format!("bundled pnpm not found at {}", path.display()));
     }
     Ok(path)
 }
@@ -149,40 +144,46 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     }
 
     let node_path = bundled_node_path(app)?;
-    let npx_cli = bundled_npx_path(&node_path)?;
+    let pnpm_path = bundled_pnpm_path(&node_path)?;
 
     // Choose a free port so we never collide with a fixed port already in use.
     let port = find_free_port()?;
     *CURRENT_PORT.lock().unwrap() = Some(port);
 
-    // Use an isolated cache/prefix so we never touch the user's system npm.
+    // Use an isolated store/cache so we never touch the user's global pnpm/npm.
     // Everything lives under a single "dsh-desktop" directory for easy
-    // discovery, with "cache" and "prefix" subdirectories.
+    // discovery, with "store" and "cache" subdirectories.
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
     let dsh_dir = data_dir.join("dsh-desktop");
-    let npm_cache = dsh_dir.join("cache");
-    let npm_prefix = dsh_dir.join("prefix");
+    let pnpm_store = dsh_dir.join("store");
 
     emit_log(
         app,
         &format!(
-            "$ npx -y --verbose @deepseek-ai/dsh web --port {port} --no-open\n   (node: {})\n   (npx: {})",
+            "$ pnpm dlx @deepseek-ai/dsh web --port {port} --no-open\n   (node: {})\n   (pnpm: {})",
             node_path.display(),
-            npx_cli.display()
+            pnpm_path.display()
         ),
     );
 
     let mut cmd = Command::new(&node_path);
-    cmd.arg(&npx_cli)
-        .args(["-y", "--verbose", "@deepseek-ai/dsh", "web"])
+    cmd.arg(&pnpm_path)
+        // Non-interactive, line-based reporter: required because we pipe
+        // stdout/stderr (the default TTY reporter misbehaves on a pipe).
+        .arg("--reporter=append-only")
+        .arg("dlx")
+        .arg("@deepseek-ai/dsh")
+        .arg("web")
         .arg("--port")
         .arg(port.to_string())
         .arg("--no-open")
-        .env("npm_config_cache", &npm_cache)
-        .env("npm_config_prefix", &npm_prefix)
+        // Isolated pnpm store + cache under the app data dir.
+        .env("PNPM_HOME", &dsh_dir)
+        .env("npm_config_store_dir", &pnpm_store)
+        .env("npm_config_cache", &dsh_dir.join("cache"))
         // Use the npmmirror registry for faster installs in CN networks.
         .env("npm_config_registry", "https://registry.npmmirror.com")
         .env("NODE_ENV", "production")

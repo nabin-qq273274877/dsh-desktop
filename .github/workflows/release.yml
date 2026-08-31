@@ -55,6 +55,16 @@ jobs:
           fi
           ls -la src-tauri/resources/node
 
+      - name: Fetch bundled pnpm
+        shell: bash
+        run: |
+          PNPM_VERSION="11.24.0"
+          mkdir -p src-tauri/resources/node/pnpm
+          curl -fsSL "https://registry.npmmirror.com/pnpm/-/pnpm-${PNPM_VERSION}.tgz" -o pnpm.tgz
+          tar -xzf pnpm.tgz
+          cp -r package/bin package/dist package/package.json src-tauri/resources/node/pnpm/
+          ls -la src-tauri/resources/node/pnpm
+
       - name: Install Linux deps (skip)
         if: matrix.platform == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf

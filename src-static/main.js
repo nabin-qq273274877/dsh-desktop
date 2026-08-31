@@ -34,18 +34,29 @@ function classify(line) {
 if (!isMain) {
   appendLog("正在初始化…", "");
 
+  // Replay any log lines emitted before our listener was ready, then subscribe
+  // to new lines. This fixes the race where the backend starts DSH before the
+  // frontend finishes loading.
+  invoke("get_log_history")
+    .then((history) => {
+      for (const line of history) {
+        appendLog(line, classify(line));
+      }
+    })
+    .catch(() => {});
+
   // Stream logs from the Rust backend.
   listen("dsh-log", (event) => {
     appendLog(event.payload, classify(event.payload));
   });
 
   // When DSH is ready, the backend navigates & shows the main window directly.
-  // Here we just hide the loading window.
+  // We destroy the loading window here (not just hide) so it is fully released.
   listen("dsh-ready", async (event) => {
     const url = event.payload || "http://127.0.0.1:3080";
     appendLog(`[ready] DSH 已就绪: ${url}`, "line-ok");
     appendLog("[ready] 正在打开主窗口…", "line-ok");
-    await win.hide();
+    await win.destroy();
   });
 
   document.getElementById("btn-retry")?.addEventListener("click", async () => {

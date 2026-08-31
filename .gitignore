@@ -11,6 +11,10 @@ src-tauri/icons/*.png
 src-tauri/icons/*.icns
 src-tauri/icons/*.ico
 
+# Tauri updater signing keys (private key is secret; .pub is public)
+keys
+keys.pub
+
 # Bundled Node runtime (large binary; fetched by CI). Keep README.txt.
 src-tauri/resources/node/*
 !src-tauri/resources/node/README.txt

@@ -26,6 +26,9 @@ static READY: AtomicBool = AtomicBool::new(false);
 /// The dynamically chosen port for the current DSH run.
 static CURRENT_PORT: Mutex<Option<u16>> = Mutex::new(None);
 
+/// Rolling buffer of log lines so a late-arriving frontend can replay history.
+static LOG_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// Find a free TCP port by binding to `127.0.0.1:0` and letting the OS choose.
 fn find_free_port() -> Result<u16, String> {
     let listener = TcpListener::bind((DSH_HOST, 0u16))
@@ -112,9 +115,19 @@ fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Emit a single log line to the loading window.
+/// Emit a single log line to the loading window, and buffer it for replay.
 fn emit_log(app: &AppHandle, line: &str) {
-    let _ = app.emit("dsh-log", line.trim_end().to_string());
+    let line = line.trim_end().to_string();
+    // Buffer (capped) so a late-arriving frontend can replay history.
+    {
+        let mut hist = LOG_HISTORY.lock().unwrap();
+        hist.push(line.clone());
+        if hist.len() > 5000 {
+            let excess = hist.len() - 5000;
+            hist.drain(0..excess);
+        }
+    }
+    let _ = app.emit("dsh-log", line);
 }
 
 /// Notify the frontend that DSH is ready and open the main window.
@@ -159,6 +172,7 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
     let dsh_dir = data_dir.join("dsh-desktop");
     let pnpm_store = dsh_dir.join("store");
+    let dsh_home = dsh_dir.join("dsh-home");
 
     emit_log(
         app,
@@ -184,6 +198,10 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         .env("PNPM_HOME", &dsh_dir)
         .env("npm_config_store_dir", &pnpm_store)
         .env("npm_config_cache", &dsh_dir.join("cache"))
+        // Isolated DSH home: keeps config/plugins/sessions separate from any
+        // other DSH install on the machine (no lock collisions, no pollution).
+        .env("DSH_HOME", &dsh_home)
+        .env("HOME", &dsh_home)
         // Use the npmmirror registry for faster installs in CN networks.
         .env("npm_config_registry", "https://registry.npmmirror.com")
         .env("NODE_ENV", "production")
@@ -289,4 +307,11 @@ pub fn start_dsh(app: AppHandle) -> Result<(), String> {
 pub fn get_dsh_url() -> String {
     let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
     dsh_url(port)
+}
+
+/// Tauri command: return all buffered log lines (so the loading window can
+/// replay history that was emitted before its JS listener was ready).
+#[tauri::command]
+pub fn get_log_history() -> Vec<String> {
+    LOG_HISTORY.lock().unwrap().clone()
 }

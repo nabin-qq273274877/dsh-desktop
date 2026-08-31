@@ -2,7 +2,7 @@
 
 **DeepSeek Harness 桌面启动器**
 
-[English](./README.en.md)
+**中文** · [English](./README.en.md)
 
 一个跨平台的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/DeepSeek-Harness) 桌面启动器,支持 **Windows** 和 **macOS**。
 

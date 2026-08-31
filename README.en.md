@@ -2,7 +2,7 @@
 
 **Desktop Launcher for DeepSeek Harness**
 
-[中文](./README.md)
+[中文](./README.md) · **English**
 
 A cross-platform desktop launcher for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/DeepSeek-Harness), supporting **Windows** and **macOS**.
 

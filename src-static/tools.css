@@ -88,6 +88,42 @@ input[type="text"]:focus {
 
 .btn:hover { opacity: 0.9; }
 
+.btn-danger {
+  background: #e5484d;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.plugin-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.plugin-item .name {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.plugin-item .ver {
+  color: var(--muted);
+  margin-left: 4px;
+}
+
 .output {
   margin: 0;
   background: var(--panel);

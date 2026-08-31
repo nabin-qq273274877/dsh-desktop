@@ -413,3 +413,13 @@ pub fn install_plugin(app: AppHandle, package: String) -> Result<String, String>
     }
     run_dsh_command(&app, &["plugin", "--profile", "web", "add", &pkg])
 }
+
+/// Tauri command: remove a plugin by package name.
+#[tauri::command]
+pub fn remove_plugin(app: AppHandle, package: String) -> Result<String, String> {
+    let pkg = package.trim().to_string();
+    if pkg.is_empty() {
+        return Err("package name is empty".to_string());
+    }
+    run_dsh_command(&app, &["plugin", "--profile", "web", "remove", &pkg])
+}

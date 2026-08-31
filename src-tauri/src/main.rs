@@ -1,5 +1,5 @@
-// Prevents an additional console window on Windows in release builds.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Prevents an additional console window on Windows (both debug and release).
+#![windows_subsystem = "windows"]
 
 mod launcher;
 mod menu;
@@ -66,6 +66,7 @@ fn main() {
             launcher::get_dsh_version,
             launcher::list_plugins,
             launcher::install_plugin,
+            launcher::remove_plugin,
             check_update,
             install_update,
             get_desktop_version

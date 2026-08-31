@@ -1,4 +1,4 @@
-# DSH Desktop
+# DeepSeek Harness Desktop
 
 **Desktop Launcher for DeepSeek Harness**
 

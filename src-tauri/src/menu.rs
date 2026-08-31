@@ -46,7 +46,7 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id(MENU_ABOUT_DESKTOP, "关于 DSH Desktop")
+            &MenuItemBuilder::with_id(MENU_ABOUT_DESKTOP, "关于 DeepSeek Harness Desktop")
                 .build(app)?,
         )
         .build()?;
@@ -121,7 +121,7 @@ fn open_tools_window(app: &AppHandle, page: &str) {
 
     let url = WebviewUrl::App("tools.html".into());
     let builder = WebviewWindowBuilder::new(app, "tools", url)
-        .title("DSH Desktop 工具")
+        .title("DeepSeek Harness Desktop 工具")
         .inner_size(560.0, 560.0)
         .resizable(true)
         .center();

@@ -1,4 +1,4 @@
-// DSH Desktop tools window — plain script using Tauri's global API.
+// DeepSeek Harness Desktop tools window — plain script using Tauri's global API.
 const __TAURI__ = window.__TAURI__;
 const invoke = __TAURI__.core.invoke;
 const listen = __TAURI__.event.listen;

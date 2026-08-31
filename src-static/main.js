@@ -1,4 +1,4 @@
-// DSH Desktop frontend — plain script using Tauri's global API
+// DeepSeek Harness Desktop frontend — plain script using Tauri's global API
 // (enabled via `withGlobalTauri: true`), so no bundler is required.
 const __TAURI__ = window.__TAURI__;
 const invoke = __TAURI__.core.invoke;

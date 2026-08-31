@@ -24,3 +24,7 @@ src-tauri/resources/node/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Vision toolkit / local temp
+.dsh-vision-toolkit/
+build/*.png

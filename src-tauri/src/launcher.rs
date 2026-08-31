@@ -154,6 +154,16 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
         .env("HOME", &dsh_home)
         .env("npm_config_registry", "https://registry.npmmirror.com")
         .env("NODE_ENV", "production")
+        // Network resilience: npmmirror occasionally drops tarball connections
+        // (UND_ERR_DESTROYED) for optional platform packages (e.g.
+        // lightningcss-darwin-x64) that pnpm still verifies on install. Bump the
+        // retry count and shorten the backoff floor so a transient failure does
+        // not abort the whole plugin install (which otherwise surfaces as
+        // "pnpm failed in profile directory" + a frozen UI).
+        .env("npm_config_fetch_retries", "5")
+        .env("npm_config_fetch_retry_mintimeout", "2000")
+        .env("npm_config_fetch_retry_maxtimeout", "30000")
+        .env("npm_config_fetch_timeout", "120000")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -256,6 +266,11 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         // Use the npmmirror registry for faster installs in CN networks.
         .env("npm_config_registry", "https://registry.npmmirror.com")
         .env("NODE_ENV", "production")
+        // Same network-resilience tuning as dsh_subcommand (see comments there).
+        .env("npm_config_fetch_retries", "5")
+        .env("npm_config_fetch_retry_mintimeout", "2000")
+        .env("npm_config_fetch_retry_maxtimeout", "30000")
+        .env("npm_config_fetch_timeout", "120000")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -414,30 +429,69 @@ pub fn get_dsh_version(app: AppHandle) -> Result<String, String> {
     run_dsh_command(&app, &["--version"]).map(|s| s.trim().to_string())
 }
 
+/// Run a DSH subcommand off the main thread so a long-running install
+/// (pnpm dependency download + retries) never freezes the UI. This mirrors
+/// `run_dsh_command` but yields to the async runtime instead of blocking.
+async fn run_dsh_command_async(
+    app: tauri::AppHandle,
+    args: Vec<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_dsh_command(&app, &refs)
+    })
+    .await
+    .map_err(|e| format!("command task failed: {e}"))?
+}
+
 /// Tauri command: list installed plugins (`dsh plugin --profile web list`).
 #[tauri::command]
-pub fn list_plugins(app: AppHandle) -> Result<String, String> {
-    run_dsh_command(&app, &["plugin", "--profile", "web", "list"])
+pub async fn list_plugins(app: AppHandle) -> Result<String, String> {
+    run_dsh_command_async(
+        app,
+        vec!["plugin".into(), "--profile".into(), "web".into(), "list".into()],
+    )
+    .await
 }
 
 /// Tauri command: install a plugin by package name.
 #[tauri::command]
-pub fn install_plugin(app: AppHandle, package: String) -> Result<String, String> {
+pub async fn install_plugin(app: AppHandle, package: String) -> Result<String, String> {
     let pkg = package.trim().to_string();
     if pkg.is_empty() {
         return Err("package name is empty".to_string());
     }
-    run_dsh_command(&app, &["plugin", "--profile", "web", "add", &pkg])
+    run_dsh_command_async(
+        app,
+        vec![
+            "plugin".into(),
+            "--profile".into(),
+            "web".into(),
+            "add".into(),
+            pkg,
+        ],
+    )
+    .await
 }
 
 /// Tauri command: remove a plugin by package name.
 #[tauri::command]
-pub fn remove_plugin(app: AppHandle, package: String) -> Result<String, String> {
+pub async fn remove_plugin(app: AppHandle, package: String) -> Result<String, String> {
     let pkg = package.trim().to_string();
     if pkg.is_empty() {
         return Err("package name is empty".to_string());
     }
-    run_dsh_command(&app, &["plugin", "--profile", "web", "remove", &pkg])
+    run_dsh_command_async(
+        app,
+        vec![
+            "plugin".into(),
+            "--profile".into(),
+            "web".into(),
+            "remove".into(),
+            pkg,
+        ],
+    )
+    .await
 }
 
 /// Export the DSH home directory to a zip archive chosen by the user.

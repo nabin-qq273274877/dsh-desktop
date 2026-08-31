@@ -143,12 +143,21 @@ async function removePlugin(name) {
 // Install plugin
 document.getElementById("btn-install")?.addEventListener("click", async () => {
   const name = document.getElementById("plugin-name")?.value.trim();
+  const input = document.getElementById("plugin-name");
+  const btn = document.getElementById("btn-install");
   const out = document.getElementById("install-output");
   if (!name) {
     setOutput(out, "请输入插件包名", "err");
     return;
   }
-  setOutput(out, `正在安装 ${name} …(可能需要下载依赖,请稍候)`);
+  // Disable input + button during the (possibly long) install so the user
+  // cannot double-submit, and show a clear "working" state instead of a
+  // frozen-looking window.
+  input.disabled = true;
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "安装中…";
+  setOutput(out, `正在安装 ${name} …(下载依赖可能较慢,请耐心等待,不要关闭窗口)`);
   try {
     const res = await invoke("install_plugin", { package: name });
     setOutput(out, res || "安装完成", "ok");
@@ -156,6 +165,10 @@ document.getElementById("btn-install")?.addEventListener("click", async () => {
     showPage("list-plugins");
   } catch (e) {
     setOutput(out, "安装失败: " + e, "err");
+  } finally {
+    input.disabled = false;
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
 });
 

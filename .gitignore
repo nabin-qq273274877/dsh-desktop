@@ -11,8 +11,9 @@ src-tauri/icons/*.png
 src-tauri/icons/*.icns
 src-tauri/icons/*.ico
 
-# Bundled Node runtime (large binary; fetched separately)
-src-tauri/resources/node/
+# Bundled Node runtime (large binary; fetched by CI). Keep README.txt.
+src-tauri/resources/node/*
+!src-tauri/resources/node/README.txt
 
 # OS
 .DS_Store

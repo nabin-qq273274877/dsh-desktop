@@ -50,7 +50,7 @@
     ],
     "createUpdaterArtifacts": true,
     "resources": {
-      "node": "resources/node"
+      "resources/node": "node"
     }
   },
   "plugins": {

@@ -3,8 +3,6 @@
 
 mod launcher;
 
-use tauri::Manager;
-
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -22,7 +20,7 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|_app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 // Ensure the DSH child process is terminated when the app exits.
                 launcher::kill_dsh();

@@ -9,7 +9,6 @@
     "core:window:allow-hide",
     "core:window:allow-close",
     "core:window:allow-set-focus",
-    "core:webview:allow-navigate",
     "updater:default"
   ]
 }

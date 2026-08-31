@@ -32,7 +32,17 @@ npx -y --verbose @deepseek-ai/dsh web --port <free-port> --no-open
 
 The port is chosen automatically at runtime (an OS-assigned free port bound to
 `127.0.0.1`), so a fixed port collision never blocks startup. The DSH web UI is
-then embedded in the app's main window at that dynamic address.
+then navigated to directly in the app's main window at that dynamic address.
+
+To speed up first-time installs, the bundled npm uses the npmmirror registry
+(`https://registry.npmmirror.com`). Its cache/prefix are isolated under a
+single per-user data directory so the system npm is never touched:
+
+```
+<app-data-dir>/dsh-desktop/
+├── cache/    # npm cache
+└── prefix/   # npm global prefix
+```
 
 ## Requirements (to build)
 

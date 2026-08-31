@@ -46,9 +46,9 @@ fn dsh_url(port: u16) -> String {
 
 /// Resolve the path to the bundled Node binary.
 ///
-/// At runtime this lives under the app's resource directory (see
-/// `tauri.conf.json` -> `bundle.resources.node`). On Windows the binary is
-/// `node.exe`, elsewhere `node`.
+/// At runtime this lives under the app's resource directory. In a packaged
+/// build the resource maps to `<resource_dir>/node/`; in dev mode the raw
+/// source layout `<src-tauri>/resources/node/` is used. We try both.
 fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
     let resource_dir = app
         .path()
@@ -56,14 +56,44 @@ fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("failed to resolve resource dir: {e}"))?;
 
     #[cfg(target_os = "windows")]
-    let node_bin = resource_dir.join("node").join("node.exe");
+    let rel: &[&str] = &["node.exe"];
     #[cfg(not(target_os = "windows"))]
-    let node_bin = resource_dir.join("node").join("bin").join("node");
+    let rel: &[&str] = &["bin", "node"];
 
-    if !node_bin.exists() {
-        return Err(format!("bundled node not found at {}", node_bin.display()));
+    let mut candidates: Vec<PathBuf> = vec![];
+    // Packaged: resource_dir/node/...
+    candidates.push({
+        let mut p = resource_dir.clone();
+        p.push("node");
+        for seg in rel {
+            p.push(seg);
+        }
+        p
+    });
+    // Dev: resource_dir (src-tauri) / resources/node/...
+    candidates.push({
+        let mut p = resource_dir.clone();
+        p.push("resources");
+        p.push("node");
+        for seg in rel {
+            p.push(seg);
+        }
+        p
+    });
+
+    for c in &candidates {
+        if c.exists() {
+            return Ok(c.clone());
+        }
     }
-    Ok(node_bin)
+    Err(format!(
+        "bundled node not found. Tried:\n  {}",
+        candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    ))
 }
 
 /// Resolve the npm npx CLI shipped with the Node distribution.
@@ -92,10 +122,24 @@ fn emit_log(app: &AppHandle, line: &str) {
     let _ = app.emit("dsh-log", line.trim_end().to_string());
 }
 
-/// Notify the frontend that DSH is ready and the main window should open.
+/// Notify the frontend that DSH is ready and open the main window.
+///
+/// We navigate the "main" window directly to the DSH URL (no iframe), then show
+/// it and emit `dsh-ready` so the loading window hides itself.
 fn emit_ready(app: &AppHandle) {
     let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
-    let _ = app.emit("dsh-ready", dsh_url(port));
+    let url = dsh_url(port);
+
+    // Navigate and show the main window directly.
+    if let Some(main_win) = app.get_webview_window("main") {
+        if let Ok(parsed) = url::Url::parse(&url) {
+            let _ = main_win.navigate(parsed);
+        }
+        let _ = main_win.show();
+        let _ = main_win.set_focus();
+    }
+
+    let _ = app.emit("dsh-ready", url);
 }
 
 /// Start the DSH child process using the bundled Node binary and stream logs.
@@ -112,13 +156,15 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     *CURRENT_PORT.lock().unwrap() = Some(port);
 
     // Use an isolated cache/prefix so we never touch the user's system npm.
-    // Named "dsh-desktop" for easy discovery when debugging.
+    // Everything lives under a single "dsh-desktop" directory for easy
+    // discovery, with "cache" and "prefix" subdirectories.
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    let npm_cache = data_dir.join("dsh-desktop-cache");
-    let npm_prefix = data_dir.join("dsh-desktop-prefix");
+    let dsh_dir = data_dir.join("dsh-desktop");
+    let npm_cache = dsh_dir.join("cache");
+    let npm_prefix = dsh_dir.join("prefix");
 
     emit_log(
         app,
@@ -137,6 +183,8 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         .arg("--no-open")
         .env("npm_config_cache", &npm_cache)
         .env("npm_config_prefix", &npm_prefix)
+        // Use the npmmirror registry for faster installs in CN networks.
+        .env("npm_config_registry", "https://registry.npmmirror.com")
         .env("NODE_ENV", "production")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

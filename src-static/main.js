@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 const win = getCurrentWindow();
 
@@ -40,17 +39,12 @@ if (!isMain) {
     appendLog(event.payload, classify(event.payload));
   });
 
-  // When DSH is ready, open the main window and hide the loading window.
+  // When DSH is ready, the backend navigates & shows the main window directly.
+  // Here we just hide the loading window.
   listen("dsh-ready", async (event) => {
     const url = event.payload || "http://127.0.0.1:3080";
     appendLog(`[ready] DSH 已就绪: ${url}`, "line-ok");
     appendLog("[ready] 正在打开主窗口…", "line-ok");
-
-    const mainWin = WebviewWindow.getByLabel("main");
-    if (mainWin) {
-      await mainWin.show();
-      await mainWin.setFocus();
-    }
     await win.hide();
   });
 
@@ -70,28 +64,8 @@ if (!isMain) {
 }
 
 // ---------- main window behavior ----------
+// The main window is a bare shell: the Rust backend navigates its webview
+// directly to the DSH URL once DSH is ready, so no iframe is needed here.
 if (isMain) {
-  // The main window renders an iframe pointed at the embedded DSH web app.
-  // The URL is resolved from the backend (the dynamically chosen port).
-  const frame = document.createElement("iframe");
-  frame.className = "dsh-frame";
-  frame.allow = "clipboard-read; clipboard-write";
-  document.body.appendChild(frame);
-
-  async function loadDsh() {
-    try {
-      const url = await invoke("get_dsh_url");
-      if (url && url !== "http://127.0.0.1:0") {
-        frame.src = url;
-      }
-    } catch (e) {
-      // DSH not ready yet; retry shortly.
-    }
-  }
-
-  loadDsh();
-
-  // The port is fixed once chosen; re-check in case the main window opened
-  // before the backend finished choosing the port.
-  setTimeout(loadDsh, 500);
+  // (nothing to do; the backend handles navigation)
 }

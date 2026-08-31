@@ -2,6 +2,8 @@
 
 **Desktop Launcher for DeepSeek Harness**
 
+[中文](./README.md)
+
 A cross-platform desktop launcher for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/DeepSeek-Harness), supporting **Windows** and **macOS**.
 
 It wraps DSH in a native desktop client with a custom loading screen, live startup logs, an embedded web UI, and automatic updates — **without requiring Node.js to be pre-installed**.

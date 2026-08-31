@@ -57,7 +57,8 @@ async function loadDshVersion() {
 function parsePluginList(out) {
   const plugins = [];
   for (const line of out.split("\n")) {
-    const m = line.match(/[├└]──\s+([^\s@]+)@(.+)/);
+    // 包名可能含 scope (@scope/name)，版本是最后一个 @ 之后(以数字开头)。
+    const m = line.match(/[├└]──\s+(.+?)@([\d][^\s]*)\s*$/);
     if (m) {
       plugins.push({ name: m[1], version: m[2] });
     }

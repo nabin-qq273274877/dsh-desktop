@@ -286,6 +286,15 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         e.to_string()
     })?;
 
+    // On Windows, tie the child to a kill-on-close Job Object so that if this
+    // launcher exits by ANY path (normal close, crash, or being killed), the
+    // OS terminates the whole child tree — preventing leaked node.exe locks.
+    #[cfg(windows)]
+    {
+        let pid = child.id();
+        crate::job_object::assign_process(pid);
+    }
+
     // Take the piped streams before moving child into the Mutex.
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();

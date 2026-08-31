@@ -4,6 +4,9 @@
 mod launcher;
 mod menu;
 
+#[cfg(windows)]
+mod job_object;
+
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 

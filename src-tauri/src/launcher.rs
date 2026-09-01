@@ -29,6 +29,11 @@ static CURRENT_PORT: Mutex<Option<u16>> = Mutex::new(None);
 /// Rolling buffer of log lines so a late-arriving frontend can replay history.
 static LOG_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
+/// Set when DSH logs indicate a plugin loading conflict (e.g. a plugin imports
+/// something the running DSH version doesn't export), so the launcher can offer
+/// the plugin list for manual uninstall instead of leaving the user stuck.
+static PLUGIN_CONFLICT: AtomicBool = AtomicBool::new(false);
+
 /// Find a free TCP port by binding to `127.0.0.1:0` and letting the OS choose.
 fn find_free_port() -> Result<u16, String> {
     let listener = TcpListener::bind((DSH_HOST, 0u16))
@@ -422,13 +427,37 @@ fn stream_lines(app: AppHandle, stream: impl std::io::Read + Send + 'static) {
     let reader = BufReader::new(stream);
     for line in reader.lines() {
         match line {
-            Ok(l) => emit_log(&app, &l),
+            Ok(l) => {
+                detect_plugin_conflict(&l);
+                emit_log(&app, &l);
+            }
             Err(_) => break,
         }
     }
 }
 
+/// Heuristically detect DSH plugin-loading conflicts in the log stream and flag
+/// them so the launcher can surface the plugin list for manual uninstall.
+fn detect_plugin_conflict(line: &str) {
+    let lower = line.to_lowercase();
+    let markers = [
+        "plugin tree failed to load",
+        "failed to apply loader entry",
+        "failed to import loader entry",
+        "does not provide an export named",
+        "plugin.*load failed",
+    ];
+    if markers.iter().any(|m| lower.contains(m)) {
+        PLUGIN_CONFLICT.store(true, Ordering::SeqCst);
+    }
+}
+
 /// Poll the DSH web URL until it returns 200, then signal readiness.
+///
+/// If the DSH child process exits before the web server comes up, the launch is
+/// treated as failed: the loop stops (instead of waiting forever) and, if a
+/// plugin conflict was detected in the logs, the plugin list window is opened so
+/// the user can uninstall the offending plugin.
 fn poll_ready(app: AppHandle) {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
@@ -442,6 +471,31 @@ fn poll_ready(app: AppHandle) {
     loop {
         attempts += 1;
         std::thread::sleep(std::time::Duration::from_millis(800));
+
+        // If the child has exited, DSH can never become ready — stop polling.
+        let exited = CHILD
+            .lock()
+            .unwrap()
+            .as_mut()
+            .map(|c| matches!(c.try_wait(), Ok(Some(_))))
+            .unwrap_or(false);
+        if exited && !READY.load(Ordering::SeqCst) {
+            emit_log(&app, "[error] DSH 进程已退出,启动失败。");
+            if PLUGIN_CONFLICT.load(Ordering::SeqCst) {
+                emit_log(
+                    &app,
+                    "[hint] 检测到插件冲突。已为你打开「已安装插件」页面,请卸载有问题的插件后点击「重试启动」。",
+                );
+                // Reuse the menu helper to surface the plugin list window.
+                crate::menu::open_plugin_list(&app);
+            } else {
+                emit_log(
+                    &app,
+                    "[hint] 可点击下方「重试启动」再次尝试。",
+                );
+            }
+            return;
+        }
 
         if let Some(client) = &client {
             match client.get(&url).send() {
@@ -497,6 +551,7 @@ pub fn kill_dsh() {
 #[tauri::command]
 pub fn start_dsh(app: AppHandle) -> Result<(), String> {
     READY.store(false, Ordering::SeqCst);
+    PLUGIN_CONFLICT.store(false, Ordering::SeqCst);
     kill_dsh();
     launch_dsh(&app)
 }

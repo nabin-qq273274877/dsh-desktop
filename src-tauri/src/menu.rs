@@ -259,6 +259,14 @@ pub fn toggle_devtools(app: &AppHandle) {
     }
 }
 
+/// Open (or focus) the tools window on the installed-plugin list page.
+///
+/// Called by the launcher when DSH fails to start due to a plugin conflict, so
+/// the user can manually uninstall the offending plugin.
+pub fn open_plugin_list(app: &AppHandle) {
+    open_tools_window(app, "list-plugins");
+}
+
 /// Open (or focus) the tools window and navigate it to the given page.
 fn open_tools_window(app: &AppHandle, page: &str) {
     // Reuse an existing tools window if present.

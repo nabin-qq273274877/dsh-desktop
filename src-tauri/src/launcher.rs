@@ -194,6 +194,10 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
         let pnpm_path = bundled_pnpm_path(&node_path)?;
         cmd.arg(&pnpm_path)
             .arg("--reporter=append-only")
+            // Auto-approve build scripts so pnpm never drops into the
+            // interactive "Choose which packages to build" prompt (which hangs
+            // when piped / non-TTY).
+            .arg("--config.dangerouslyAllowAllBuilds=true")
             .arg("dlx")
             .arg(&dsh_pkg);
     }
@@ -320,6 +324,11 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
             // Non-interactive, line-based reporter: required because we pipe
             // stdout/stderr (the default TTY reporter misbehaves on a pipe).
             .arg("--reporter=append-only")
+            // Never prompt interactively to approve postinstall/build scripts
+            // (node-pty, koffi, ...). In a piped/non-TTY environment that prompt
+            // cannot be answered and pnpm hangs at "Choose which packages to
+            // build". Auto-approve all build scripts instead.
+            .arg("--config.dangerouslyAllowAllBuilds=true")
             .arg("dlx")
             .arg(&dsh_pkg)
             .arg("web")
@@ -342,6 +351,10 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         .env("npm_config_fetch_retry_mintimeout", "2000")
         .env("npm_config_fetch_retry_maxtimeout", "30000")
         .env("npm_config_fetch_timeout", "120000")
+        // Ensure the child can never read a TTY from us: stdin is closed so any
+        // interactive pnpm/npm prompt fails fast instead of hanging the loading
+        // window waiting for input.
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

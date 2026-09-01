@@ -34,6 +34,12 @@ static LOG_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// the plugin list for manual uninstall instead of leaving the user stuck.
 static PLUGIN_CONFLICT: AtomicBool = AtomicBool::new(false);
 
+/// Set when DSH fails because a package can't be resolved at all (missing store
+/// content, half-cleared cache, etc.) rather than a real plugin conflict. These
+/// must NOT open the plugin list — uninstalling won't help — and should instead
+/// point the user at the clear-cache / reinstall flow.
+static PLUGIN_MISSING: AtomicBool = AtomicBool::new(false);
+
 /// Find a free TCP port by binding to `127.0.0.1:0` and letting the OS choose.
 fn find_free_port() -> Result<u16, String> {
     let listener = TcpListener::bind((DSH_HOST, 0u16))
@@ -479,6 +485,22 @@ fn stream_lines(app: AppHandle, stream: impl std::io::Read + Send + 'static) {
 /// them so the launcher can surface the plugin list for manual uninstall.
 fn detect_plugin_conflict(line: &str) {
     let lower = line.to_lowercase();
+
+    // A missing package is NOT a conflict: uninstalling a plugin won't help when
+    // the store content itself is gone. Detect these first so they win over the
+    // generic loader markers below.
+    let missing_markers = [
+        "err_module_not_found",
+        "cannot find package",
+        "cannot find module",
+        "package not found",
+        "enoent",
+    ];
+    if missing_markers.iter().any(|m| lower.contains(m)) {
+        PLUGIN_MISSING.store(true, Ordering::SeqCst);
+        return;
+    }
+
     let markers = [
         "plugin tree failed to load",
         "failed to apply loader entry",
@@ -522,7 +544,12 @@ fn poll_ready(app: AppHandle) {
             // Let the loading window enable the "重试启动" button (the failure
             // is async; start_dsh returned Ok, so the frontend can't detect it).
             let _ = app.emit("dsh-launch-failed", ());
-            if PLUGIN_CONFLICT.load(Ordering::SeqCst) {
+            if PLUGIN_MISSING.load(Ordering::SeqCst) {
+                emit_log(
+                    &app,
+                    "[hint] 检测到插件包缺失(缓存不完整)。请点击菜单「关于 → 清除 DSH 缓存」后重试,或重启应用重新安装。",
+                );
+            } else if PLUGIN_CONFLICT.load(Ordering::SeqCst) {
                 emit_log(
                     &app,
                     "[hint] 检测到插件冲突。已为你打开「已安装插件」页面,请卸载有问题的插件后点击「重试启动」。",
@@ -853,8 +880,8 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     }
     emit_clear_progress(&app, 30, "正在删除依赖缓存(文件较多,请耐心)…", false);
 
-    // Delete the (large) store by first renaming it (instant) so the progress
-    // bar can advance immediately, then delete the renamed dir in the background.
+    // Delete the (large) store synchronously and reliably (see remove_dir_fast
+    // doc for why the old background-delete approach was removed).
     let removed_store = remove_dir_fast(&store, "pnpm 依赖缓存 (store)");
     emit_clear_progress(&app, 60, "已清除 pnpm 依赖缓存…", false);
 
@@ -866,7 +893,11 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     remove_dir(&dsh_dir.join("pnpm"), "pnpm dlx 缓存", &mut removed, &mut failed);
     emit_clear_progress(&app, 85, "已清除 dlx 缓存…", false);
 
-    if !removed_store.is_empty() {
+    // Surface a store deletion failure as a real error (instead of silently
+    // treating it as "removed"), so the user knows the cache wasn't fully cleared.
+    if removed_store.contains("失败") {
+        failed.push(removed_store);
+    } else if !removed_store.is_empty() {
         removed.push(removed_store);
     }
 
@@ -911,31 +942,63 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     std::process::exit(0);
 }
 
-/// Delete a (potentially large) directory quickly by first renaming it to a
-/// temporary name (instant), then deleting the renamed dir in a background
-/// thread. Returns the label if renamed+queued, or an empty string if it
-/// doesn't exist / couldn't be renamed (caller can fall back).
+/// Delete a directory (which may be large) reliably and synchronously.
+///
+/// Previous implementation renamed to a `.deleting` sibling and deleted it on a
+/// background thread, then returned success immediately. That was broken in two
+/// ways: (1) the background delete result was discarded, and (2) the process
+/// often exited right after (via `std::process::exit`) before the delete ran,
+/// leaving a leftover `store.deleting`. The leftover then split store content
+/// across `store/` and `store.deleting/`, producing the "links exist but files
+/// are missing" half-cleared state that surfaced as ERR_MODULE_NOT_FOUND.
+///
+/// We now delete synchronously with a short retry loop. Since DSH has already
+/// been killed and we've waited a second for file handles to release, this is
+/// reliable and only marginally slower.
 fn remove_dir_fast(dir: &std::path::Path, label: &str) -> String {
+    // Clean up any stale `.deleting` leftover from the old buggy implementation.
+    let tmp = dir.with_extension("deleting");
+    if tmp.exists() {
+        let _ = remove_dir_with_retry(&tmp);
+    }
+
     if !dir.exists() {
         return format!("{label}(不存在)");
     }
-    // Rename to a temp sibling (same filesystem → instant, no copy).
-    let tmp = dir.with_extension("deleting");
-    let _ = std::fs::remove_dir_all(&tmp); // clear any previous leftover
+
+    // Try a direct delete first (handles release makes this usually succeed).
+    if remove_dir_with_retry(dir) {
+        return label.to_string();
+    }
+
+    // Fall back to rename-then-delete: rename is instant, then delete the
+    // renamed dir synchronously (still on this thread, so it cannot be skipped
+    // by a premature process exit).
     if std::fs::rename(dir, &tmp).is_ok() {
-        let tmp = tmp.to_path_buf();
-        // Delete in the background so the caller can advance progress immediately.
-        std::thread::spawn(move || {
-            let _ = std::fs::remove_dir_all(&tmp);
-        });
-        label.to_string()
-    } else {
-        // Rename failed (locked?); fall back to synchronous delete.
+        if remove_dir_with_retry(&tmp) {
+            return label.to_string();
+        }
+        // Rename succeeded but delete of the renamed dir failed — report it so
+        // the caller surfaces a real error instead of silently leaving junk.
+        return format!("{label}: 删除 {tmp:?} 失败");
+    }
+
+    format!("{label}: 删除失败")
+}
+
+/// Attempt `remove_dir_all` a few times, sleeping briefly between attempts to
+/// let transient file locks clear. Returns true on success.
+fn remove_dir_with_retry(dir: &std::path::Path) -> bool {
+    for attempt in 0..3 {
         match std::fs::remove_dir_all(dir) {
-            Ok(_) => label.to_string(),
-            Err(e) => format!("{label}: {e}"),
+            Ok(_) => return true,
+            Err(_) if attempt < 2 => {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            Err(_) => return false,
         }
     }
+    false
 }
 
 /// Recursively delete `dir`, recording the outcome into `removed`/`failed`.

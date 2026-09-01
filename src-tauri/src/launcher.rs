@@ -99,13 +99,38 @@ pub(crate) fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
     ))
 }
 
+/// The Node distribution root directory (contains `bin/node` on Unix, or
+/// `node.exe` on Windows, plus the bundled `pnpm/` and `node_modules/npm/`).
+///
+/// On Unix the node binary lives at `<dist>/bin/node`; on Windows at
+/// `<dist>/node.exe`. Everything else (pnpm, npm) sits in the dist root, so we
+/// must walk back to that root before looking for siblings — using
+/// `node_path.parent()` alone would wrongly add a `bin/` level on Unix.
+fn bundled_node_dir(node_path: &PathBuf) -> PathBuf {
+    let name = node_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if name == "node.exe" {
+        // Windows: <dist>/node.exe
+        node_path.parent().unwrap().to_path_buf()
+    } else {
+        // Unix: <dist>/bin/node -> <dist>
+        node_path
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| node_path.parent().unwrap().to_path_buf())
+    }
+}
+
 /// Resolve the bundled pnpm entry script (`bin/pnpm.mjs`).
 ///
 /// pnpm is placed beside the Node distribution at `<node_dir>/pnpm/bin/pnpm.mjs`
 /// and run via the bundled Node (`node pnpm.mjs dlx ...`). This avoids relying on
 /// Node's built-in npm/npx and gives faster, hard-linked installs.
 fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
-    let mut path = node_path.parent().unwrap().to_path_buf();
+    let mut path = bundled_node_dir(node_path);
     path.push("pnpm");
     path.push("bin");
     path.push("pnpm.mjs");
@@ -121,7 +146,7 @@ fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
 /// we invoke that bundled npx directly (`node npx-cli.js -y ...`) rather than
 /// relying on a system-wide npx install.
 fn bundled_npx_path(node_path: &PathBuf) -> Result<PathBuf, String> {
-    let mut path = node_path.parent().unwrap().to_path_buf();
+    let mut path = bundled_node_dir(node_path);
     path.push("node_modules");
     path.push("npm");
     path.push("bin");

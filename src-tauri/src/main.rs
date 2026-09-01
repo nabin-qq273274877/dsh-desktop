@@ -62,6 +62,16 @@ fn get_desktop_version(app: tauri::AppHandle) -> String {
 }
 
 fn main() {
+    // Enforce a single instance on Windows. If another instance is already
+    // running (it holds the named mutex), exit immediately — otherwise both
+    // instances would create a tray icon (duplicate tray icons) and run DSH.
+    #[cfg(windows)]
+    {
+        if !job_object::acquire_single_instance() {
+            std::process::exit(0);
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

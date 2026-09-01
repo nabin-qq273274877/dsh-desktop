@@ -302,5 +302,15 @@ listen("tools-page", (event) => {
   showPage(event.payload);
 });
 
-// Default page.
-showPage("install-plugin");
+// Default page. Prefer an explicit ?page=... query (used e.g. by the launcher
+// when it surfaces the plugin list after a plugin conflict), falling back to the
+// install-plugin page.
+(function () {
+  let initial = "install-plugin";
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const wanted = q.get("page");
+    if (wanted && pages[wanted]) initial = wanted;
+  } catch (e) {}
+  showPage(initial);
+})();

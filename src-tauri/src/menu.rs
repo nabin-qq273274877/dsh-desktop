@@ -292,7 +292,7 @@ fn open_tools_window(app: &AppHandle, page: &str) {
         return;
     }
 
-    let url = WebviewUrl::App("tools.html".into());
+    let url = WebviewUrl::App(format!("tools.html?page={page}").into());
     let builder = WebviewWindowBuilder::new(app, "tools", url)
         .title("DeepSeek Harness Desktop 工具")
         .inner_size(560.0, 620.0)
@@ -301,7 +301,8 @@ fn open_tools_window(app: &AppHandle, page: &str) {
         .center();
 
     if let Ok(win) = builder.build() {
-        // Emit after a short delay so the frontend has registered its listener.
+        // Belt-and-braces: the initial page is set via the URL query above, so
+        // the window shows the right page even before the async emit lands.
         let app2 = app.clone();
         let page = page.to_string();
         std::thread::spawn(move || {

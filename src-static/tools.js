@@ -265,12 +265,18 @@ listen("about-trigger-update", async () => {
 
 async function runUpdate() {
   const out = document.getElementById("update-output");
+  const checkBtn = document.getElementById("btn-check-update");
+  // Disable the "检查更新" button while a download/install is in progress so
+  // the user can't trigger a second update concurrently.
+  if (checkBtn) checkBtn.disabled = true;
   setOutput(out, "正在下载并安装新版本…");
   try {
     await invoke("install_update");
     setOutput(out, "更新已安装,应用即将重启", "ok");
   } catch (e) {
     setOutput(out, "更新失败: " + e, "err");
+  } finally {
+    if (checkBtn) checkBtn.disabled = false;
   }
 }
 

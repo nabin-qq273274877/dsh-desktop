@@ -202,3 +202,12 @@ input[type="text"]:focus {
   line-height: 1.6;
   color: #c7cdd8;
 }
+
+/* GitHub link: brand orange, underline only on hover. */
+#github-link {
+  color: #fd5900;
+  text-decoration: none;
+}
+#github-link:hover {
+  text-decoration: underline;
+}

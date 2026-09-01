@@ -309,29 +309,27 @@ fn handle_clear_cache(app: AppHandle) {
         }
     }
 
-    // Run the clear off the UI thread (deleting a large store can take a while),
-    // then show the outcome.
-    std::thread::spawn(move || {
-        let result = crate::launcher::clear_dsh_cache(app.clone(), mode.to_string());
-        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-        match result {
-            Ok(msg) => {
-                let _ = app
-                    .dialog()
-                    .message(msg)
-                    .title("清除 DSH 缓存")
-                    .blocking_show();
-            }
-            Err(e) => {
-                let _ = app
-                    .dialog()
-                    .message(e)
-                    .title("清除 DSH 缓存")
-                    .kind(MessageDialogKind::Error)
-                    .blocking_show();
-            }
+    // Run the clear synchronously on the current (menu event) thread. Deleting
+    // the store may block the UI briefly, but it guarantees the operation runs
+    // (background threads + async nesting were silently dropping this).
+    let result = crate::launcher::clear_dsh_cache(app.clone(), mode.to_string());
+    match result {
+        Ok(msg) => {
+            let _ = app
+                .dialog()
+                .message(msg)
+                .title("清除 DSH 缓存")
+                .blocking_show();
         }
-    });
+        Err(e) => {
+            let _ = app
+                .dialog()
+                .message(e)
+                .title("清除 DSH 缓存")
+                .kind(MessageDialogKind::Error)
+                .blocking_show();
+        }
+    }
 }
 
 /// Toggle the DevTools inspector on the main window (if present).

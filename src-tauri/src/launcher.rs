@@ -243,6 +243,12 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
     cmd.env("PNPM_HOME", &dsh_dir)
         .env("npm_config_store_dir", &pnpm_store)
         .env("npm_config_cache", &dsh_dir.join("cache"))
+        // Isolate pnpm's dlx cache (which otherwise lands in the user's global
+        // %LOCALAPPDATA%\pnpm-cache\dlx) so clearing our store/cache also clears
+        // the stale dlx entry that points at a deleted @deepseek-ai/dsh bin.js.
+        .env("XDG_CACHE_HOME", &dsh_dir)
+        .env("XDG_DATA_HOME", &dsh_dir)
+        .env("XDG_STATE_HOME", &dsh_dir)
         .env("DSH_HOME", &dsh_home)
         .env("HOME", &dsh_home)
         .env("npm_config_registry", "https://registry.npmmirror.com")
@@ -389,6 +395,11 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     cmd.env("PNPM_HOME", &dsh_dir)
         .env("npm_config_store_dir", &pnpm_store)
         .env("npm_config_cache", &dsh_dir.join("cache"))
+        // Isolate pnpm's dlx cache (see dsh_subcommand) so clearing our cache
+        // also clears the stale dlx entry that points at a deleted DSH bin.js.
+        .env("XDG_CACHE_HOME", &dsh_dir)
+        .env("XDG_DATA_HOME", &dsh_dir)
+        .env("XDG_STATE_HOME", &dsh_dir)
         // Isolated DSH home: keeps config/plugins/sessions separate from any
         // other DSH install on the machine (no lock collisions, no pollution).
         .env("DSH_HOME", &dsh_home)
@@ -810,6 +821,9 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
 
     remove_dir(&store, "pnpm 依赖缓存 (store)", &mut removed, &mut failed);
     remove_dir(&cache, "下载缓存 (cache)", &mut removed, &mut failed);
+    // Also clear pnpm's isolated dlx cache (XDG_CACHE_HOME/pnpm), which holds a
+    // stale entry pointing at the deleted @deepseek-ai/dsh bin.js.
+    remove_dir(&dsh_dir.join("pnpm"), "pnpm dlx 缓存", &mut removed, &mut failed);
     push_diag(&format!("[clear] removed={removed:?} failed={failed:?}"), &mut diag);
 
     if !failed.is_empty() {

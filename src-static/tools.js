@@ -7,7 +7,9 @@ const pages = {
   "install-plugin": document.getElementById("page-install-plugin"),
   "list-plugins": document.getElementById("page-list-plugins"),
   "dsh-version": document.getElementById("page-dsh-version"),
+  "settings": document.getElementById("page-settings"),
   "about": document.getElementById("page-about"),
+  "changelog": document.getElementById("page-changelog"),
 };
 
 function showPage(name) {
@@ -17,6 +19,8 @@ function showPage(name) {
   if (name === "list-plugins") refreshPlugins();
   if (name === "about") loadAboutVersion();
   if (name === "dsh-version") loadDshVersion();
+  if (name === "settings") loadSettings();
+  if (name === "changelog") loadChangelog();
 }
 
 function setOutput(el, text, kind = "") {
@@ -175,6 +179,93 @@ document.getElementById("btn-install")?.addEventListener("click", async () => {
 
 document.getElementById("btn-refresh")?.addEventListener("click", refreshPlugins);
 
+// ---------- settings ----------
+function loadSettings() {
+  const status = document.getElementById("settings-status");
+  if (status) status.textContent = "";
+  invoke("get_settings")
+    .then((s) => {
+      document.querySelectorAll('input[name="launcher"]').forEach((r) => {
+        r.checked = r.value === s.launcher;
+      });
+      document.querySelectorAll('input[name="channel"]').forEach((r) => {
+        r.checked = r.value === s.version_channel;
+      });
+    })
+    .catch((e) => {
+      if (status) status.textContent = "读取设置失败: " + e;
+    });
+}
+
+document.getElementById("btn-save-settings")?.addEventListener("click", async () => {
+  const launcher = document.querySelector('input[name="launcher"]:checked')?.value;
+  const channel = document.querySelector('input[name="channel"]:checked')?.value;
+  const status = document.getElementById("settings-status");
+  if (status) status.textContent = "正在保存…";
+  try {
+    await invoke("update_settings", { launcher, versionChannel: channel });
+    if (status) status.textContent = "已保存(重启 DSH 后生效)";
+  } catch (e) {
+    if (status) status.textContent = "保存失败: " + e;
+  }
+});
+
+// ---------- changelog ----------
+function buildChangelogEntry(entry) {
+  const div = document.createElement("div");
+  div.className = "changelog-entry";
+  const title = document.createElement("h3");
+  title.textContent = "v" + entry.title;
+  const ul = document.createElement("ul");
+  for (const c of entry.changes) {
+    const li = document.createElement("li");
+    li.textContent = c;
+    ul.appendChild(li);
+  }
+  div.appendChild(title);
+  div.appendChild(ul);
+  return div;
+}
+
+async function loadChangelog() {
+  const el = document.getElementById("changelog-list");
+  if (!el) return;
+  el.innerHTML = "";
+  el.appendChild(textNode("正在加载更新日志…"));
+  try {
+    const entries = await invoke("get_changelog");
+    el.innerHTML = "";
+    for (const entry of entries) {
+      el.appendChild(buildChangelogEntry(entry));
+    }
+  } catch (e) {
+    el.innerHTML = "";
+    const err = document.createElement("div");
+    err.textContent = "加载更新日志失败: " + e;
+    err.className = "output err";
+    el.appendChild(err);
+  }
+}
+
+// ---------- update flow ----------
+// When the backend opens the about page to start an update (user opted in from
+// the startup prompt or the "new version" menu indicator), run the update here.
+listen("about-trigger-update", async () => {
+  showPage("about");
+  await runUpdate();
+});
+
+async function runUpdate() {
+  const out = document.getElementById("update-output");
+  setOutput(out, "正在下载并安装新版本…");
+  try {
+    await invoke("install_update");
+    setOutput(out, "更新已安装,应用即将重启", "ok");
+  } catch (e) {
+    setOutput(out, "更新失败: " + e, "err");
+  }
+}
+
 document.getElementById("btn-check-update")?.addEventListener("click", async () => {
   const out = document.getElementById("update-output");
   setOutput(out, "正在检查更新…");
@@ -182,12 +273,7 @@ document.getElementById("btn-check-update")?.addEventListener("click", async () 
     const latest = await invoke("check_update");
     if (latest) {
       setOutput(out, "发现新版本 v" + latest + ",正在下载并安装…", "ok");
-      try {
-        await invoke("install_update");
-        setOutput(out, "更新已安装,应用即将重启", "ok");
-      } catch (e) {
-        setOutput(out, "更新失败: " + e, "err");
-      }
+      await runUpdate();
     } else {
       setOutput(out, "无可用更新,已是最新版本", "");
     }

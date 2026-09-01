@@ -115,6 +115,23 @@ fn bundled_pnpm_path(node_path: &PathBuf) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Resolve the bundled npm npx CLI (`<node_dir>/node_modules/npm/bin/npx-cli.js`).
+///
+/// The bundled Node ships with npm, so when the user picks `npx` as the runner
+/// we invoke that bundled npx directly (`node npx-cli.js -y ...`) rather than
+/// relying on a system-wide npx install.
+fn bundled_npx_path(node_path: &PathBuf) -> Result<PathBuf, String> {
+    let mut path = node_path.parent().unwrap().to_path_buf();
+    path.push("node_modules");
+    path.push("npm");
+    path.push("bin");
+    path.push("npx-cli.js");
+    if !path.exists() {
+        return Err(format!("bundled npx not found at {}", path.display()));
+    }
+    Ok(path)
+}
+
 /// Resolve the DSH home data directory (`<app-data>/dsh-desktop/dsh-home`).
 pub(crate) fn dsh_home_path(app: &AppHandle) -> Result<PathBuf, String> {
     let data_dir = app
@@ -124,12 +141,14 @@ pub(crate) fn dsh_home_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("dsh-desktop").join("dsh-home"))
 }
 
-/// Build a `Command` that runs `node pnpm.mjs dlx @deepseek-ai/dsh <args>`
-/// with the isolated pnpm store/cache/DSH-home env, suitable for one-shot
-/// subcommands (`--version`, `plugin --profile web add <pkg>`, ...).
+/// Build a `Command` that runs `@deepseek-ai/dsh <args>` through the configured
+/// runner (`node pnpm.mjs dlx` or bundled `npx`), with the isolated
+/// store/cache/DSH-home env, suitable for one-shot subcommands (`--version`,
+/// `plugin --profile web add <pkg>`, ...). The version channel (dist-tag) is
+/// taken from the current settings.
 pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, String> {
+    let settings = crate::settings::get(app);
     let node_path = bundled_node_path(app)?;
-    let pnpm_path = bundled_pnpm_path(&node_path)?;
 
     let data_dir = app
         .path()
@@ -139,11 +158,20 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
     let pnpm_store = dsh_dir.join("store");
     let dsh_home = dsh_dir.join("dsh-home");
 
+    let dsh_pkg = format!("@deepseek-ai/dsh@{}", settings.version_channel);
+
     let mut cmd = Command::new(&node_path);
-    cmd.arg(&pnpm_path)
-        .arg("--reporter=append-only")
-        .arg("dlx")
-        .arg("@deepseek-ai/dsh");
+    if settings.uses_npx() {
+        // Use the bundled npm's npx CLI directly.
+        let npx_path = bundled_npx_path(&node_path)?;
+        cmd.arg(&npx_path).arg("-y").arg(&dsh_pkg);
+    } else {
+        let pnpm_path = bundled_pnpm_path(&node_path)?;
+        cmd.arg(&pnpm_path)
+            .arg("--reporter=append-only")
+            .arg("dlx")
+            .arg(&dsh_pkg);
+    }
     for a in args {
         cmd.arg(a);
     }
@@ -209,6 +237,10 @@ fn emit_ready(app: &AppHandle) {
     }
 
     let _ = app.emit("dsh-ready", url);
+
+    // Kick off the async "new version" check now that the main window is up.
+    // It runs off the UI thread so it never blocks the embedded DSH view.
+    crate::menu::spawn_startup_update_check(app.clone());
 }
 
 /// Start the DSH child process using the bundled Node binary and stream logs.
@@ -217,8 +249,8 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    let settings = crate::settings::get(app);
     let node_path = bundled_node_path(app)?;
-    let pnpm_path = bundled_pnpm_path(&node_path)?;
 
     // Choose a free port so we never collide with a fixed port already in use.
     let port = find_free_port()?;
@@ -235,28 +267,42 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     let pnpm_store = dsh_dir.join("store");
     let dsh_home = dsh_dir.join("dsh-home");
 
+    let runner = if settings.uses_npx() { "npx" } else { "pnpm" };
     emit_log(
         app,
         &format!(
-            "$ pnpm dlx @deepseek-ai/dsh web --port {port} --no-open\n   (node: {})\n   (pnpm: {})",
-            node_path.display(),
-            pnpm_path.display()
+            "$ {runner} dlx @deepseek-ai/dsh@{} web --port {port} --no-open\n   (node: {})",
+            settings.version_channel,
+            node_path.display()
         ),
     );
 
+    let dsh_pkg = format!("@deepseek-ai/dsh@{}", settings.version_channel);
+
     let mut cmd = Command::new(&node_path);
-    cmd.arg(&pnpm_path)
-        // Non-interactive, line-based reporter: required because we pipe
-        // stdout/stderr (the default TTY reporter misbehaves on a pipe).
-        .arg("--reporter=append-only")
-        .arg("dlx")
-        .arg("@deepseek-ai/dsh")
-        .arg("web")
-        .arg("--port")
-        .arg(port.to_string())
-        .arg("--no-open")
-        // Isolated pnpm store + cache under the app data dir.
-        .env("PNPM_HOME", &dsh_dir)
+    if settings.uses_npx() {
+        let npx_path = bundled_npx_path(&node_path)?;
+        cmd.arg(&npx_path)
+            .arg("-y")
+            .arg(&dsh_pkg)
+            .arg("web")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--no-open");
+    } else {
+        let pnpm_path = bundled_pnpm_path(&node_path)?;
+        cmd.arg(&pnpm_path)
+            // Non-interactive, line-based reporter: required because we pipe
+            // stdout/stderr (the default TTY reporter misbehaves on a pipe).
+            .arg("--reporter=append-only")
+            .arg("dlx")
+            .arg(&dsh_pkg)
+            .arg("web")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--no-open");
+    }
+    cmd.env("PNPM_HOME", &dsh_dir)
         .env("npm_config_store_dir", &pnpm_store)
         .env("npm_config_cache", &dsh_dir.join("cache"))
         // Isolated DSH home: keeps config/plugins/sessions separate from any
@@ -464,23 +510,46 @@ pub async fn list_plugins(app: AppHandle) -> Result<String, String> {
 }
 
 /// Tauri command: install a plugin by package name.
+///
+/// On failure, the partially-installed plugin is automatically removed so a
+/// broken half-install never lingers in the profile.
 #[tauri::command]
 pub async fn install_plugin(app: AppHandle, package: String) -> Result<String, String> {
     let pkg = package.trim().to_string();
     if pkg.is_empty() {
         return Err("package name is empty".to_string());
     }
-    run_dsh_command_async(
-        app,
+    match run_dsh_command_async(
+        app.clone(),
         vec![
             "plugin".into(),
             "--profile".into(),
             "web".into(),
             "add".into(),
-            pkg,
+            pkg.clone(),
         ],
     )
     .await
+    {
+        Ok(out) => Ok(out),
+        Err(e) => {
+            // Best-effort cleanup: uninstall the failed plugin so the profile is
+            // not left in a broken/partial state. Ignore cleanup errors — the
+            // original error is what matters.
+            let _ = run_dsh_command_async(
+                app,
+                vec![
+                    "plugin".into(),
+                    "--profile".into(),
+                    "web".into(),
+                    "remove".into(),
+                    pkg.clone(),
+                ],
+            )
+            .await;
+            Err(format!("{e}"))
+        }
+    }
 }
 
 /// Tauri command: remove a plugin by package name.

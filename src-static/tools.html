@@ -37,6 +37,47 @@
       <pre id="dsh-version-out" class="output"></pre>
     </section>
 
+    <!-- 设置 -->
+    <section id="page-settings" class="page" hidden>
+      <h2>设置</h2>
+
+      <h3>启动选项</h3>
+      <p class="hint">选择启动 DSH 时使用的包管理器(npx 或 pnpm dlx)。</p>
+      <div class="row">
+        <label class="radio-label">
+          <input type="radio" name="launcher" value="pnpm" />
+          pnpm dlx <span class="muted">(推荐,更快)</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="launcher" value="npx" />
+          npx
+        </label>
+      </div>
+
+      <h3>版本选择</h3>
+      <p class="hint">选择安装的 @deepseek-ai/dsh 版本通道(latest / next / alpha)。</p>
+      <div class="row">
+        <label class="radio-label">
+          <input type="radio" name="channel" value="latest" />
+          latest <span class="muted">(稳定)</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="channel" value="next" />
+          next
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="channel" value="alpha" />
+          alpha
+        </label>
+      </div>
+
+      <div class="row">
+        <button id="btn-save-settings" class="btn" type="button">保存设置</button>
+        <span id="settings-status" class="hint inline-hint"></span>
+      </div>
+      <p class="hint">提示:更改启动选项或版本通道后,重启 DSH 才会生效。</p>
+    </section>
+
     <!-- 关于(含检查更新) -->
     <section id="page-about" class="page" hidden>
       <h2>关于 DeepSeek Harness Desktop</h2>
@@ -54,6 +95,13 @@
         <button id="btn-check-update" class="btn" type="button">检查更新</button>
       </div>
       <pre id="update-output" class="output"></pre>
+    </section>
+
+    <!-- 更新日志 -->
+    <section id="page-changelog" class="page" hidden>
+      <h2>更新日志</h2>
+      <p class="hint">当前版本与历史版本的更新记录。</p>
+      <div id="changelog-list" class="changelog-list"></div>
     </section>
   </main>
 

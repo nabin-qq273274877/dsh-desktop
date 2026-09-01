@@ -1,8 +1,10 @@
 // Prevents an additional console window on Windows (both debug and release).
 #![windows_subsystem = "windows"]
 
+mod changelog;
 mod launcher;
 mod menu;
+mod settings;
 
 #[cfg(windows)]
 mod job_object;
@@ -76,7 +78,10 @@ fn main() {
             launcher::import_config,
             check_update,
             install_update,
-            get_desktop_version
+            get_desktop_version,
+            settings::get_settings,
+            settings::update_settings,
+            changelog::get_changelog
         ])
         .setup(|app| {
             // Build the native menu and attach it ONLY to the main window.

@@ -1,10 +1,13 @@
 //! Native application menu: "运行" (install plugin), "查看" (list plugins),
-//! and "关于" (desktop version / DSH version / check update).
+//! "设置" (launcher / version channel), and "关于" (desktop version / DSH
+//! version / check update / changelog).
 //!
 //! Menu clicks open a dedicated HTML "tools" window and tell it which page to
 //! show. The tools window performs the actual work via Tauri commands.
 
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use std::sync::Mutex;
+
+use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const MENU_RUN_INSTALL_PLUGIN: &str = "run_install_plugin";
@@ -12,9 +15,18 @@ const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
 const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
 const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
+const MENU_SETTINGS_LAUNCHER: &str = "settings_launcher";
+const MENU_SETTINGS_CHANNEL: &str = "settings_channel";
 const MENU_ABOUT_CHECK_UPDATE: &str = "about_check_update";
 const MENU_ABOUT_DSH_VERSION: &str = "about_dsh_version";
 const MENU_ABOUT_DESKTOP: &str = "about_desktop";
+const MENU_ABOUT_CHANGELOG: &str = "about_changelog";
+/// Menu item that lights up when a new desktop version is available.
+const MENU_ABOUT_UPDATE_AVAILABLE: &str = "about_update_available";
+
+/// Handle to the "update available" menu item, so the async update check can
+/// enable it and rewrite its label once a newer version is found.
+static UPDATE_AVAILABLE_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
 
 /// Build the native app menu.
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -46,22 +58,74 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .build()?;
 
+    let settings_submenu = SubmenuBuilder::new(app, "设置")
+        .item(
+            &MenuItemBuilder::with_id(MENU_SETTINGS_LAUNCHER, "启动选项(npx / pnpm dlx)…")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(MENU_SETTINGS_CHANNEL, "版本选择(latest / next / alpha)…")
+                .build(app)?,
+        )
+        .build()?;
+
+    // The "update available" indicator: created disabled; it is enabled and
+    // relabeled by the async update check when a new version is found.
+    let update_item = MenuItemBuilder::with_id(
+        MENU_ABOUT_UPDATE_AVAILABLE,
+        "正在检查新版本…",
+    )
+    .enabled(false)
+    .build(app)?;
+    *UPDATE_AVAILABLE_ITEM.lock().unwrap() = Some(update_item.clone());
+
     let about_submenu = SubmenuBuilder::new(app, "关于")
+        .item(&update_item)
+        .separator()
         .item(
             &MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "DeepSeek Harness 版本")
                 .build(app)?,
         )
         .item(
+            &MenuItemBuilder::with_id(MENU_ABOUT_CHANGELOG, "更新日志…")
+                .build(app)?,
+        )
+        .separator()
+        .item(
             &MenuItemBuilder::with_id(MENU_ABOUT_DESKTOP, "关于 DeepSeek Harness Desktop")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(MENU_ABOUT_CHECK_UPDATE, "检查更新…")
                 .build(app)?,
         )
         .build()?;
 
     let menu = MenuBuilder::new(app)
-        .items(&[&run_submenu, &view_submenu, &about_submenu])
+        .items(&[&run_submenu, &view_submenu, &settings_submenu, &about_submenu])
         .build()?;
 
     Ok(menu)
+}
+
+/// Set the "update available" menu indicator: enable it (and relabel it) when a
+/// new version is found, or hide/disable it otherwise.
+///
+/// Called by the async update check once it knows whether an update exists.
+pub fn set_update_available(latest: Option<String>) {
+    let guard = UPDATE_AVAILABLE_ITEM.lock().unwrap();
+    if let Some(item) = guard.as_ref() {
+        match latest {
+            Some(v) => {
+                let _ = item.set_text(&format!("发现新版本 v{v} — 点击更新"));
+                let _ = item.set_enabled(true);
+            }
+            None => {
+                let _ = item.set_text("已是最新版本");
+                let _ = item.set_enabled(false);
+            }
+        }
+    }
 }
 
 /// Handle menu events by opening the tools window on the requested page.
@@ -85,19 +149,100 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
             toggle_devtools(app);
             return;
         }
+        MENU_ABOUT_UPDATE_AVAILABLE => {
+            // User clicked the "new version" indicator: open the about page and
+            // ask it to start the update automatically.
+            open_tools_window(app, "about");
+            trigger_update_in_about(app);
+            return;
+        }
         _ => {}
     }
 
     let page = match id {
         MENU_RUN_INSTALL_PLUGIN => "install-plugin",
         MENU_VIEW_LIST_PLUGINS => "list-plugins",
+        MENU_SETTINGS_LAUNCHER | MENU_SETTINGS_CHANNEL => "settings",
         MENU_ABOUT_CHECK_UPDATE => "check-update",
         MENU_ABOUT_DSH_VERSION => "dsh-version",
+        MENU_ABOUT_CHANGELOG => "changelog",
         MENU_ABOUT_DESKTOP => "about",
         _ => return,
     };
 
     open_tools_window(app, page);
+}
+
+/// Open the tools window on the "about" page and ask it to start the update
+/// automatically. Used when the user opts into updating (from the startup
+/// prompt or the "new version" menu indicator).
+pub fn open_about_with_update(app: &AppHandle) {
+    open_tools_window(app, "about");
+    trigger_update_in_about(app);
+}
+
+/// Run an update check in the background once the main window is ready.
+///
+/// This is deliberately async and non-blocking: it runs off the UI thread, so
+/// it never stalls the embedded DSH web view. When a new version is found it
+/// (a) lights up the "发现新版本" menu indicator and (b) shows a yes/no prompt
+/// (on the main thread, since native dialogs need it); if the user agrees it
+/// opens the about page and triggers the update there.
+pub fn spawn_startup_update_check(app: AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    std::thread::spawn(move || {
+        // Let the main window fully settle before surfacing any dialog.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let checked = tauri::async_runtime::block_on(async {
+            let updater = app.updater().ok()?;
+            updater.check().await.ok().flatten()
+        });
+
+        match checked {
+            Some(update) => {
+                let version = update.version.clone();
+                // Light up the menu indicator immediately (thread-safe).
+                set_update_available(Some(version.clone()));
+
+                // Ask the user on the main thread (native dialogs need it).
+                let app2 = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+                    let agree = app2
+                        .dialog()
+                        .message(format!(
+                            "发现新版本 v{version},是否立即前往「关于 DeepSeek Harness Desktop」界面并更新?"
+                        ))
+                        .title("发现新版本")
+                        .kind(MessageDialogKind::Info)
+                        .buttons(MessageDialogButtons::YesNo)
+                        .blocking_show();
+
+                    if agree {
+                        open_about_with_update(&app2);
+                    }
+                });
+            }
+            None => {
+                // No update (or the check failed) — ensure the indicator is
+                // reset/disabled so it never shows a stale "new version".
+                set_update_available(None);
+            }
+        }
+    });
+}
+
+/// Tell the about page to start the update automatically (used when the user
+/// opts into updating from the "new version" prompt/indicator).
+fn trigger_update_in_about(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // Give the tools window time to render the about page and register its
+        // listener before we tell it to trigger the update.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let _ = app.emit("about-trigger-update", ());
+    });
 }
 
 /// Show the result of an export/import operation in a message dialog.
@@ -147,7 +292,7 @@ fn open_tools_window(app: &AppHandle, page: &str) {
     let url = WebviewUrl::App("tools.html".into());
     let builder = WebviewWindowBuilder::new(app, "tools", url)
         .title("DeepSeek Harness Desktop 工具")
-        .inner_size(560.0, 560.0)
+        .inner_size(560.0, 620.0)
         .resizable(true)
         .maximizable(false)
         .center();

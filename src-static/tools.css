@@ -143,3 +143,62 @@ input[type="text"]:focus {
 
 .output.err { color: #ff7b7b; }
 .output.ok { color: #7be0a3; }
+
+/* ---------- settings ---------- */
+.radio-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.radio-label input {
+  accent-color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inline-hint {
+  align-self: center;
+  margin: 0;
+}
+
+/* ---------- changelog ---------- */
+.changelog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.changelog-entry {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.changelog-entry h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.changelog-entry ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.changelog-entry li {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c7cdd8;
+}

@@ -771,7 +771,7 @@ pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, St
 ///
 /// DSH is killed first so no process holds file locks.
 #[tauri::command]
-pub async fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
+pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     let mode = mode.trim().to_string();
     if mode != "deps" && mode != "all" {
         return Err("mode must be \"deps\" or \"all\"".to_string());
@@ -780,57 +780,50 @@ pub async fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, Str
     // Stop DSH first so files aren't locked.
     kill_dsh();
 
-    let app2 = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let data_dir = app2
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-        let dsh_dir = data_dir.join("dsh-desktop");
-        let store = dsh_dir.join("store");
-        let cache = dsh_dir.join("cache");
-        let profile = dsh_dir.join("dsh-home").join("profiles").join("web");
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let dsh_dir = data_dir.join("dsh-desktop");
+    let store = dsh_dir.join("store");
+    let cache = dsh_dir.join("cache");
+    let profile = dsh_dir.join("dsh-home").join("profiles").join("web");
 
-        let mut removed: Vec<String> = Vec::new();
-        let mut failed: Vec<String> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
 
-        if mode == "all" {
-            // Remove the whole web profile (plugin deps + config), keep user data.
-            remove_dir(&profile, "插件环境 (profiles/web)", &mut removed, &mut failed);
+    if mode == "all" {
+        // Remove the whole web profile (plugin deps + config), keep user data.
+        remove_dir(&profile, "插件环境 (profiles/web)", &mut removed, &mut failed);
+    } else {
+        // Only remove dependency caches, keep plugin config.
+        remove_dir(&profile.join("node_modules"), "插件依赖 (node_modules)", &mut removed, &mut failed);
+    }
+
+    remove_dir(&store, "pnpm 依赖缓存 (store)", &mut removed, &mut failed);
+    remove_dir(&cache, "下载缓存 (cache)", &mut removed, &mut failed);
+
+    if !failed.is_empty() {
+        return Err(format!(
+            "部分清除失败:\n{}",
+            failed.join("\n")
+        ));
+    }
+
+    // Automatically restart DSH after a successful clear.
+    if let Err(e) = start_dsh(app.clone()) {
+        emit_log(&app, &format!("[error] 清除后重启 DSH 失败: {e}"));
+        return Err(format!("清除完成,但重启 DSH 失败:\n{e}"));
+    }
+
+    Ok(format!(
+        "清除完成(已删除):\n{}\n\n用户数据(会话/凭据/设置)已保留,DSH 已自动重启。",
+        if removed.is_empty() {
+            "(无)".to_string()
         } else {
-            // Only remove dependency caches, keep plugin config.
-            remove_dir(&profile.join("node_modules"), "插件依赖 (node_modules)", &mut removed, &mut failed);
+            removed.join("\n")
         }
-
-        remove_dir(&store, "pnpm 依赖缓存 (store)", &mut removed, &mut failed);
-        remove_dir(&cache, "下载缓存 (cache)", &mut removed, &mut failed);
-
-        if !failed.is_empty() {
-            return Err(format!(
-                "部分清除失败:\n{}",
-                failed.join("\n")
-            ));
-        }
-
-        // Automatically restart DSH after a successful clear by calling
-        // start_dsh directly (it resets READY, kills, and spawns DSH). This is
-        // reliable and doesn't depend on a loading window's frontend re-running.
-        if let Err(e) = start_dsh(app2.clone()) {
-            emit_log(&app2, &format!("[error] 清除后重启 DSH 失败: {e}"));
-            return Err(format!("清除完成,但重启 DSH 失败:\n{e}"));
-        }
-
-        Ok(format!(
-            "清除完成(已删除):\n{}\n\n用户数据(会话/凭据/设置)已保留,DSH 已自动重启。",
-            if removed.is_empty() {
-                "(无)".to_string()
-            } else {
-                removed.join("\n")
-            }
-        ))
-    })
-    .await
-    .map_err(|e| format!("clear task failed: {e}"))?
+    ))
 }
 
 /// Recursively delete `dir`, recording the outcome into `removed`/`failed`.

@@ -312,10 +312,7 @@ fn handle_clear_cache(app: AppHandle) {
     // Run the clear off the UI thread (deleting a large store can take a while),
     // then show the outcome.
     std::thread::spawn(move || {
-        let result = tauri::async_runtime::block_on(crate::launcher::clear_dsh_cache(
-            app.clone(),
-            mode.to_string(),
-        ));
+        let result = crate::launcher::clear_dsh_cache(app.clone(), mode.to_string());
         use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
         match result {
             Ok(msg) => {

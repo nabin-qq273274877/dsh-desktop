@@ -20,6 +20,18 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.0".to_string(),
+            title: "0.2.0".to_string(),
+            changes: vec![
+                "新增系统托盘:左键单击显示主窗口,右键菜单含设置/查看版本/安装插件/插件列表/导出数据/导入数据/退出。".to_string(),
+                "设置新增「关闭主窗口时」:可选择退出程序或隐藏到托盘继续运行(默认隐藏到托盘)。".to_string(),
+                "loading 页新增「复制日志」按钮,可一键复制界面显示的日志。".to_string(),
+                "修复等待日志刷屏把真实错误信息顶没的问题,错误信息自动置顶可见。".to_string(),
+                "DSH 启动因插件冲突失败时自动弹出插件列表页,便于手动卸载问题插件。".to_string(),
+                "修复 macOS 全新安装时数据目录不存在导致 DSH 启动失败的问题。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.1.5".to_string(),
             title: "0.1.5".to_string(),
             changes: vec![

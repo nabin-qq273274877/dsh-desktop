@@ -129,6 +129,28 @@ fn bundled_node_dir(node_path: &PathBuf) -> PathBuf {
     }
 }
 
+/// Prepend the bundled Node binary's directory to the child's `PATH`.
+///
+/// pnpm's postinstall/build scripts (`node-pty`, `koffi`, `protobufjs`, ...)
+/// invoke `node` via the system `PATH`. On macOS the system usually has no
+/// `node`, so those scripts fail with `sh: node: command not found`. Adding the
+/// bundled node's directory (where `node`/`node.exe` lives) to the front of
+/// `PATH` makes those scripts resolve our bundled node instead.
+fn prepend_node_to_path(cmd: &mut Command, node_path: &PathBuf) {
+    let Some(node_dir) = node_path.parent() else {
+        return;
+    };
+    let node_dir = node_dir.to_path_buf();
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
+    paths.insert(0, node_dir.clone());
+    if let Ok(joined) = std::env::join_paths(&paths) {
+        cmd.env("PATH", joined);
+    } else {
+        cmd.env("PATH", &existing);
+    }
+}
+
 /// Resolve the bundled pnpm entry script (`bin/pnpm.mjs`).
 ///
 /// pnpm is placed beside the Node distribution at `<node_dir>/pnpm/bin/pnpm.mjs`
@@ -215,6 +237,9 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
     for a in args {
         cmd.arg(a);
     }
+    // Ensure pnpm postinstall/build scripts can find `node` (esp. on macOS
+    // where the system PATH usually has no node).
+    prepend_node_to_path(&mut cmd, &node_path);
     cmd.env("PNPM_HOME", &dsh_dir)
         .env("npm_config_store_dir", &pnpm_store)
         .env("npm_config_cache", &dsh_dir.join("cache"))
@@ -358,6 +383,9 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
             .arg(port.to_string())
             .arg("--no-open");
     }
+    // Ensure pnpm postinstall/build scripts can find `node` (esp. on macOS
+    // where the system PATH usually has no node).
+    prepend_node_to_path(&mut cmd, &node_path);
     cmd.env("PNPM_HOME", &dsh_dir)
         .env("npm_config_store_dir", &pnpm_store)
         .env("npm_config_cache", &dsh_dir.join("cache"))
@@ -480,6 +508,9 @@ fn poll_ready(app: AppHandle) {
             .unwrap_or(false);
         if exited && !READY.load(Ordering::SeqCst) {
             emit_log(&app, "[error] DSH 进程已退出,启动失败。");
+            // Let the loading window enable the "重试启动" button (the failure
+            // is async; start_dsh returned Ok, so the frontend can't detect it).
+            let _ = app.emit("dsh-launch-failed", ());
             if PLUGIN_CONFLICT.load(Ordering::SeqCst) {
                 emit_log(
                     &app,

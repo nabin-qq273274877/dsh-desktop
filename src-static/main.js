@@ -64,6 +64,13 @@ if (!isMain) {
     }
   });
 
+  // DSH started OK but the child process later exited without becoming ready
+  // (e.g. plugin/build failure). Enable the retry button so the user isn't
+  // stuck with a disabled button.
+  listen("dsh-launch-failed", () => {
+    if (retryBtn) retryBtn.disabled = false;
+  });
+
   async function startDsh() {
     appendLog("正在启动 DSH…", "");
     if (retryBtn) retryBtn.disabled = true;

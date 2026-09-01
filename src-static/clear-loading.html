@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>清除 DSH 缓存</title>
+  <link rel="stylesheet" href="clear-loading.css" />
+</head>
+<body>
+  <main class="clear-wrap">
+    <header class="brand">
+      <h1 class="brand-title">正在清除 DSH 缓存</h1>
+      <p id="clear-status" class="brand-sub">准备中…</p>
+    </header>
+
+    <section class="progress-box">
+      <div class="progress-track">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+      <p id="progress-text" class="progress-text">0%</p>
+    </section>
+  </main>
+
+  <script src="clear-loading.js" defer></script>
+</body>
+</html>

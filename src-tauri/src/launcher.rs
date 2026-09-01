@@ -769,6 +769,14 @@ pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, St
     .await
 }
 
+/// Emit a progress update to the clear-cache loading window.
+fn emit_clear_progress(app: &AppHandle, pct: u32, label: &str, done: bool) {
+    let _ = app.emit(
+        "clear-progress",
+        serde_json::json!({ "pct": pct, "label": label, "done": done }),
+    );
+}
+
 /// Tauri command: clear DSH cache. `mode` is `"deps"` or `"all"`.
 ///
 /// In BOTH modes user data is preserved (sessions, credentials, settings,
@@ -788,17 +796,9 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
         return Err("mode must be \"deps\" or \"all\"".to_string());
     }
 
-    // Diagnostic log (written to a file so it survives without a visible window).
-    let mut diag = String::new();
-    let push_diag = |s: &str, diag: &mut String| {
-        diag.push_str(s);
-        diag.push('\n');
-    };
-    push_diag(&format!("[clear] start mode={mode}"), &mut diag);
-
     // Stop DSH first so files aren't locked.
     kill_dsh();
-    push_diag("[clear] killed dsh", &mut diag);
+    emit_clear_progress(&app, 10, "正在停止 DSH 进程…", false);
     emit_log(&app, "[info] 正在清除 DSH 缓存,请稍候…");
 
     let data_dir = app
@@ -809,7 +809,6 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     let store = dsh_dir.join("store");
     let cache = dsh_dir.join("cache");
     let profile = dsh_dir.join("dsh-home").join("profiles").join("web");
-    push_diag(&format!("[clear] dsh_dir={}", dsh_dir.display()), &mut diag);
 
     let mut removed: Vec<String> = Vec::new();
     let mut failed: Vec<String> = Vec::new();
@@ -819,19 +818,21 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     } else {
         remove_dir(&profile.join("node_modules"), "插件依赖 (node_modules)", &mut removed, &mut failed);
     }
+    emit_clear_progress(&app, 30, "已清除插件依赖…", false);
 
     remove_dir(&store, "pnpm 依赖缓存 (store)", &mut removed, &mut failed);
+    emit_clear_progress(&app, 60, "已清除 pnpm 依赖缓存…", false);
+
     remove_dir(&cache, "下载缓存 (cache)", &mut removed, &mut failed);
+    emit_clear_progress(&app, 75, "已清除下载缓存…", false);
+
     // Also clear pnpm's isolated dlx cache (XDG_CACHE_HOME/pnpm), which holds a
     // stale entry pointing at the deleted @deepseek-ai/dsh bin.js.
     remove_dir(&dsh_dir.join("pnpm"), "pnpm dlx 缓存", &mut removed, &mut failed);
-    push_diag(&format!("[clear] removed={removed:?} failed={failed:?}"), &mut diag);
+    emit_clear_progress(&app, 85, "已清除 dlx 缓存…", false);
 
     if !failed.is_empty() {
-        let _ = std::fs::write(
-            data_dir.join("clear-cache.log"),
-            format!("{diag}RESULT=FAILED\n"),
-        );
+        emit_clear_progress(&app, 100, "清除失败", true);
         return Err(format!(
             "部分清除失败:\n{}",
             failed.join("\n")
@@ -839,16 +840,14 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     }
 
     // Automatically restart DSH after a successful clear.
+    emit_clear_progress(&app, 92, "正在重启 DSH…", false);
     if let Err(e) = start_dsh(app.clone()) {
         emit_log(&app, &format!("[error] 清除后重启 DSH 失败: {e}"));
-        let _ = std::fs::write(
-            data_dir.join("clear-cache.log"),
-            format!("{diag}RESULT=restart-failed: {e}\n"),
-        );
+        emit_clear_progress(&app, 100, "重启失败", true);
         return Err(format!("清除完成,但重启 DSH 失败:\n{e}"));
     }
 
-    let _ = std::fs::write(data_dir.join("clear-cache.log"), format!("{diag}RESULT=OK\n"));
+    emit_clear_progress(&app, 100, "清除完成,DSH 已重启", true);
 
     Ok(format!(
         "清除完成(已删除):\n{}\n\n用户数据(会话/凭据/设置)已保留,DSH 已自动重启。",

@@ -309,12 +309,9 @@ fn handle_clear_cache(app: AppHandle) {
         }
     }
 
-    // Show the loading window (if it still exists) so the user sees the
-    // "正在清除" message and, afterwards, the DSH re-download progress.
-    if let Some(loading) = app.get_webview_window("loading") {
-        let _ = loading.show();
-        let _ = loading.set_focus();
-    }
+    // Open a dedicated clear-cache progress window (separate from the startup
+    // loading window) so the user sees a progress bar while we clear + restart.
+    open_clear_loading(&app);
 
     // Run the clear on a background thread so deleting the (large) store does
     // NOT block the UI. clear_dsh_cache restarts DSH itself when done.
@@ -344,6 +341,26 @@ fn handle_clear_cache(app: AppHandle) {
             }
         });
     });
+}
+
+/// Open (or focus) the dedicated clear-cache progress window.
+fn open_clear_loading(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("clear-loading") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let url = WebviewUrl::App("clear-loading.html".into());
+    let builder = WebviewWindowBuilder::new(app, "clear-loading", url)
+        .title("清除 DSH 缓存")
+        .inner_size(360.0, 200.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .center()
+        .decorations(true)
+        .visible(true);
+    let _ = builder.build();
 }
 
 /// Toggle the DevTools inspector on the main window (if present).

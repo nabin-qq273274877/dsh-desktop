@@ -323,7 +323,7 @@ pub fn show_main_window(app: &AppHandle) {
 
 /// Build the system tray icon with a right-click menu.
 ///
-/// Double-clicking the icon shows the main window. The right-click menu reuses
+/// Left-clicking the icon shows the main window. The right-click menu reuses
 /// the same menu item ids as the native menu, so clicks are routed through
 /// `handle_menu_event`.
 pub fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
@@ -350,8 +350,12 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
     tray = tray.menu(&menu);
 
     tray = tray.on_tray_icon_event(|tray, event| {
-        if let TrayIconEvent::DoubleClick { .. } = event {
-            // Double-click: bring the main window to the foreground.
+        // Left-click shows the main window (right-click still opens the menu).
+        if let TrayIconEvent::Click {
+            button: tauri::tray::MouseButton::Left,
+            ..
+        } = event
+        {
             show_main_window(tray.app_handle());
         }
     });

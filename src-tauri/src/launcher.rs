@@ -777,8 +777,17 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
         return Err("mode must be \"deps\" or \"all\"".to_string());
     }
 
+    // Diagnostic log (written to a file so it survives without a visible window).
+    let mut diag = String::new();
+    let push_diag = |s: &str, diag: &mut String| {
+        diag.push_str(s);
+        diag.push('\n');
+    };
+    push_diag(&format!("[clear] start mode={mode}"), &mut diag);
+
     // Stop DSH first so files aren't locked.
     kill_dsh();
+    push_diag("[clear] killed dsh", &mut diag);
 
     let data_dir = app
         .path()
@@ -788,22 +797,26 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     let store = dsh_dir.join("store");
     let cache = dsh_dir.join("cache");
     let profile = dsh_dir.join("dsh-home").join("profiles").join("web");
+    push_diag(&format!("[clear] dsh_dir={}", dsh_dir.display()), &mut diag);
 
     let mut removed: Vec<String> = Vec::new();
     let mut failed: Vec<String> = Vec::new();
 
     if mode == "all" {
-        // Remove the whole web profile (plugin deps + config), keep user data.
         remove_dir(&profile, "插件环境 (profiles/web)", &mut removed, &mut failed);
     } else {
-        // Only remove dependency caches, keep plugin config.
         remove_dir(&profile.join("node_modules"), "插件依赖 (node_modules)", &mut removed, &mut failed);
     }
 
     remove_dir(&store, "pnpm 依赖缓存 (store)", &mut removed, &mut failed);
     remove_dir(&cache, "下载缓存 (cache)", &mut removed, &mut failed);
+    push_diag(&format!("[clear] removed={removed:?} failed={failed:?}"), &mut diag);
 
     if !failed.is_empty() {
+        let _ = std::fs::write(
+            data_dir.join("clear-cache.log"),
+            format!("{diag}RESULT=FAILED\n"),
+        );
         return Err(format!(
             "部分清除失败:\n{}",
             failed.join("\n")
@@ -813,8 +826,14 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     // Automatically restart DSH after a successful clear.
     if let Err(e) = start_dsh(app.clone()) {
         emit_log(&app, &format!("[error] 清除后重启 DSH 失败: {e}"));
+        let _ = std::fs::write(
+            data_dir.join("clear-cache.log"),
+            format!("{diag}RESULT=restart-failed: {e}\n"),
+        );
         return Err(format!("清除完成,但重启 DSH 失败:\n{e}"));
     }
+
+    let _ = std::fs::write(data_dir.join("clear-cache.log"), format!("{diag}RESULT=OK\n"));
 
     Ok(format!(
         "清除完成(已删除):\n{}\n\n用户数据(会话/凭据/设置)已保留,DSH 已自动重启。",

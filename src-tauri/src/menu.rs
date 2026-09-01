@@ -290,8 +290,8 @@ fn handle_clear_cache(app: AppHandle) {
         .blocking_show_with_result();
 
     let mode = match choice {
-        tauri_plugin_dialog::MessageDialogResult::Yes => "deps",
-        tauri_plugin_dialog::MessageDialogResult::No => "all",
+        tauri_plugin_dialog::MessageDialogResult::Custom(s) if s == "仅清依赖" => "deps",
+        tauri_plugin_dialog::MessageDialogResult::Custom(s) if s == "全清 DSH" => "all",
         _ => return, // cancelled
     };
 

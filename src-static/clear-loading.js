@@ -12,9 +12,18 @@ function setProgress(pct, label) {
   if (status) status.textContent = label || "";
 }
 
-// Backend emits `clear-progress` events: { pct, label, done }.
+// Mark that JS actually loaded (so we can tell it apart from the static HTML).
+if (status) status.textContent = "正在准备…";
+
+// Backend emits `clear-progress` events as a JSON string: { pct, label, done }.
 listen("clear-progress", (event) => {
-  const p = event.payload || {};
+  let p = {};
+  try {
+    const raw = typeof event.payload === "string" ? event.payload : JSON.stringify(event.payload);
+    p = JSON.parse(raw);
+  } catch (e) {
+    p = { pct: 0, label: "解析进度失败", done: false };
+  }
   setProgress(p.pct || 0, p.label || "");
   if (p.done) {
     // Close this window once the clear + restart is finished.
@@ -24,4 +33,5 @@ listen("clear-progress", (event) => {
 });
 
 // Initial state.
-setProgress(0, "准备中…");
+setProgress(0, "正在准备…");
+

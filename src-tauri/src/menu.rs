@@ -314,32 +314,25 @@ fn handle_clear_cache(app: AppHandle) {
     open_clear_loading(&app);
 
     // Run the clear on a background thread so deleting the (large) store does
-    // NOT block the UI. clear_dsh_cache restarts DSH itself when done.
+    // NOT block the UI. On success clear_dsh_cache exits the process (fresh
+    // restart); only a failure returns here, which we surface as an error.
     let app2 = app.clone();
     std::thread::spawn(move || {
-        let result = crate::launcher::clear_dsh_cache(app2.clone(), mode.to_string());
-        // Show the outcome dialog on the main thread (native dialogs need it).
-        let app3 = app2.clone();
-        let _ = app2.run_on_main_thread(move || {
-            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-            match result {
-                Ok(msg) => {
-                    let _ = app3
-                        .dialog()
-                        .message(msg)
-                        .title("清除 DSH 缓存")
-                        .blocking_show();
-                }
-                Err(e) => {
-                    let _ = app3
-                        .dialog()
-                        .message(e)
-                        .title("清除 DSH 缓存")
-                        .kind(MessageDialogKind::Error)
-                        .blocking_show();
-                }
-            }
-        });
+        // Give the progress window's JS a moment to load and register its
+        // `clear-progress` listener before we start emitting progress events.
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        if let Err(e) = crate::launcher::clear_dsh_cache(app2.clone(), mode.to_string()) {
+            let app3 = app2.clone();
+            let _ = app2.run_on_main_thread(move || {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                let _ = app3
+                    .dialog()
+                    .message(e)
+                    .title("清除 DSH 缓存")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+            });
+        }
     });
 }
 

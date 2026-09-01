@@ -771,10 +771,9 @@ pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, St
 
 /// Emit a progress update to the clear-cache loading window.
 fn emit_clear_progress(app: &AppHandle, pct: u32, label: &str, done: bool) {
-    let _ = app.emit(
-        "clear-progress",
-        serde_json::json!({ "pct": pct, "label": label, "done": done }),
-    );
+    let json = serde_json::json!({ "pct": pct, "label": label, "done": done }).to_string();
+    // Use emit_str so the frontend receives a plain JSON string it can parse.
+    let _ = app.emit_str("clear-progress", json);
 }
 
 /// Tauri command: clear DSH cache. `mode` is `"deps"` or `"all"`.
@@ -796,10 +795,20 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
         return Err("mode must be \"deps\" or \"all\"".to_string());
     }
 
+    // Trace log to a file so we can diagnose progress/restart issues.
+    let trace = |s: &str| {
+        if let Ok(d) = app.path().app_data_dir() {
+            let p = d.join("dsh-desktop").join("clear-trace.log");
+            let _ = std::fs::write(&p, s);
+        }
+    };
+    trace(&format!("clear start mode={mode}"));
+
     // Stop DSH first so files aren't locked.
     kill_dsh();
     emit_clear_progress(&app, 10, "正在停止 DSH 进程…", false);
     emit_log(&app, "[info] 正在清除 DSH 缓存,请稍候…");
+    trace("killed dsh");
 
     let data_dir = app
         .path()
@@ -839,24 +848,34 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
         ));
     }
 
-    // Automatically restart DSH after a successful clear.
-    emit_clear_progress(&app, 92, "正在重启 DSH…", false);
-    if let Err(e) = start_dsh(app.clone()) {
-        emit_log(&app, &format!("[error] 清除后重启 DSH 失败: {e}"));
-        emit_clear_progress(&app, 100, "重启失败", true);
-        return Err(format!("清除完成,但重启 DSH 失败:\n{e}"));
+    // Clear done. Restart by launching a fresh instance of the app, then exit
+    // the current process (like the updater does). This avoids the flaky
+    // in-process start_dsh restart.
+    emit_clear_progress(&app, 100, "清除完成,正在重启应用…", true);
+    trace("spawning fresh instance + exit");
+
+    // Spawn a delayed launcher that starts a new app instance after this one
+    // exits (releasing the single-instance mutex).
+    let exe = std::env::current_exe().unwrap_or_default();
+    let exe_str = exe.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("cmd")
+            .args(["/c", "timeout", "/t", "2", "/nobreak", ">", "nul", "&", "start", "", &exe_str])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("sh")
+            .args(["-c", &format!("sleep 2 && \"{}\" &", exe_str)])
+            .spawn();
     }
 
-    emit_clear_progress(&app, 100, "清除完成,DSH 已重启", true);
-
-    Ok(format!(
-        "清除完成(已删除):\n{}\n\n用户数据(会话/凭据/设置)已保留,DSH 已自动重启。",
-        if removed.is_empty() {
-            "(无)".to_string()
-        } else {
-            removed.join("\n")
-        }
-    ))
+    // Exit the current process so the single-instance mutex is released before
+    // the new instance starts.
+    std::process::exit(0);
 }
 
 /// Recursively delete `dir`, recording the outcome into `removed`/`failed`.

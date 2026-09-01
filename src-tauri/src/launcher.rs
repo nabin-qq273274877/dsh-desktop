@@ -784,11 +784,9 @@ fn emit_clear_progress(app: &AppHandle, pct: u32, label: &str, done: bool) {
         label: label.to_string(),
         done,
     };
-    // Emit directly to the clear-loading window (more reliable than a global
-    // broadcast when the window was created at runtime).
-    if let Some(win) = app.get_webview_window("clear-loading") {
-        let _ = win.emit("clear-progress", payload);
-    }
+    // Global broadcast (same mechanism the tools window uses for `tools-page`,
+    // which works reliably). The clear-loading window's JS listens for it.
+    let _ = app.emit("clear-progress", payload);
 }
 
 /// Tauri command: clear DSH cache. `mode` is `"deps"` or `"all"`.

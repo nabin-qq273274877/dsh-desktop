@@ -320,7 +320,7 @@ fn handle_clear_cache(app: AppHandle) {
     std::thread::spawn(move || {
         // Give the progress window's JS a moment to load and register its
         // `clear-progress` listener before we start emitting progress events.
-        std::thread::sleep(std::time::Duration::from_millis(800));
+        std::thread::sleep(std::time::Duration::from_millis(1500));
         if let Err(e) = crate::launcher::clear_dsh_cache(app2.clone(), mode.to_string()) {
             let app3 = app2.clone();
             let _ = app2.run_on_main_thread(move || {

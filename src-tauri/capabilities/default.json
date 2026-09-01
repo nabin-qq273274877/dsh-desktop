@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for DeepSeek Harness Desktop windows",
-  "windows": ["loading", "main", "tools"],
+  "windows": ["loading", "main", "tools", "clear-loading"],
   "permissions": [
     "core:default",
     "core:window:allow-show",

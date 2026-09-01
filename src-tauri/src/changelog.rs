@@ -20,13 +20,23 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.1.5".to_string(),
+            title: "0.1.5".to_string(),
+            changes: vec![
+                "修复 macOS 打包后找不到内置 pnpm/npx 导致 DSH 启动失败的问题。".to_string(),
+                "修复 pnpm 启动时因 build scripts 审批交互提示而卡住的问题(改为非交互自动批准)。".to_string(),
+                "设置改为 pnpm dlx 启动 + latest 版本通道。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.1.4".to_string(),
             title: "0.1.4".to_string(),
             changes: vec![
-                "新增「设置」菜单:可选择使用 npx 还是 pnpm dlx 启动,并选择 DSH 版本通道(latest / next / alpha)。".to_string(),
+                "新增「设置」:可选择使用 npx 还是 pnpm dlx 启动,并选择 DSH 版本通道(latest / next / alpha)。".to_string(),
                 "插件安装失败时自动卸载失败的插件,避免残留损坏的半安装。".to_string(),
                 "「关于」新增「更新日志」,可查看当前及历史版本的更新记录。".to_string(),
                 "进入主窗口后异步检查新版本,发现新版本时在菜单栏提示并支持一键进入关于页更新。".to_string(),
+                "loading 页退出会彻底结束 DSH 进程并退出应用,不再后台残留。".to_string(),
             ],
         },
         ChangelogEntry {

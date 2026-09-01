@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 const MENU_RUN_INSTALL_PLUGIN: &str = "run_install_plugin";
 const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
 const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
+const MENU_RUN_CLEAR_CACHE: &str = "run_clear_cache";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
 const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
 const MENU_SETTINGS: &str = "settings";
@@ -47,6 +48,11 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .item(
             &MenuItemBuilder::with_id(MENU_RUN_IMPORT_CONFIG, "导入配置…")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_CLEAR_CACHE, "清除 DSH 缓存…")
                 .build(app)?,
         )
         .build()?;
@@ -134,6 +140,10 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         MENU_RUN_IMPORT_CONFIG => {
             let result = crate::launcher::import_config(app.clone());
             show_config_result(app, result);
+            return;
+        }
+        MENU_RUN_CLEAR_CACHE => {
+            handle_clear_cache(app.clone());
             return;
         }
         MENU_VIEW_DEVTOOLS => {
@@ -256,6 +266,75 @@ fn show_config_result(app: &AppHandle, result: Result<String, String>) {
                 .blocking_show();
         }
     }
+}
+
+/// Handle the "清除 DSH 缓存…" menu item: ask which kind of clear, confirm the
+/// destructive one, then clear in the background and report the result.
+///
+/// User data (sessions/credentials/settings) is NEVER removed — only dependency
+/// caches and (for "all") the web profile's plugin environment.
+fn handle_clear_cache(app: AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    // First dialog: pick which kind of clear.
+    let choice = app
+        .dialog()
+        .message("请选择清除方式。两种方式都会保留你的会话、凭据、设置等用户数据。")
+        .title("清除 DSH 缓存")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            "仅清依赖".to_string(),
+            "全清 DSH".to_string(),
+            "取消".to_string(),
+        ))
+        .blocking_show_with_result();
+
+    let mode = match choice {
+        tauri_plugin_dialog::MessageDialogResult::Yes => "deps",
+        tauri_plugin_dialog::MessageDialogResult::No => "all",
+        _ => return, // cancelled
+    };
+
+    // "all" is destructive (removes plugins + their config) — require a confirm.
+    if mode == "all" {
+        let ok = app
+            .dialog()
+            .message("全清将删除所有已安装插件及其配置(依赖会重新下载)。你的会话、凭据、设置等用户数据仍会保留。确定继续吗?")
+            .title("确认全清 DSH")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::YesNo)
+            .blocking_show();
+        if !ok {
+            return;
+        }
+    }
+
+    // Run the clear off the UI thread (deleting a large store can take a while),
+    // then show the outcome.
+    std::thread::spawn(move || {
+        let result = tauri::async_runtime::block_on(crate::launcher::clear_dsh_cache(
+            app.clone(),
+            mode.to_string(),
+        ));
+        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+        match result {
+            Ok(msg) => {
+                let _ = app
+                    .dialog()
+                    .message(msg)
+                    .title("清除 DSH 缓存")
+                    .blocking_show();
+            }
+            Err(e) => {
+                let _ = app
+                    .dialog()
+                    .message(e)
+                    .title("清除 DSH 缓存")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+            }
+        }
+    });
 }
 
 /// Toggle the DevTools inspector on the main window (if present).

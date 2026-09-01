@@ -20,6 +20,17 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.1".to_string(),
+            title: "0.2.1".to_string(),
+            changes: vec![
+                "修复 macOS/无系统 Node 环境启动失败:内置 Node 目录加入 PATH,DSH 依赖的 postinstall 脚本不再报「node: command not found」。".to_string(),
+                "修复 DSH 异步启动失败后「重试启动」按钮仍禁用的问题。".to_string(),
+                "更新安装器:覆盖 exe 前等待旧进程完全退出释放文件句柄,避免更新时「Error opening file for writing」。".to_string(),
+                "正在下载/安装新版本时禁用「检查更新」按钮,防止重复触发更新。".to_string(),
+                "关于页 GitHub 链接改为品牌橙配色,hover 显示下划线。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.0".to_string(),
             title: "0.2.0".to_string(),
             changes: vec![

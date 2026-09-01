@@ -769,11 +769,26 @@ pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, St
     .await
 }
 
+/// Payload for the `clear-progress` event.
+#[derive(Clone, serde::Serialize)]
+struct ClearProgress {
+    pct: u32,
+    label: String,
+    done: bool,
+}
+
 /// Emit a progress update to the clear-cache loading window.
 fn emit_clear_progress(app: &AppHandle, pct: u32, label: &str, done: bool) {
-    let json = serde_json::json!({ "pct": pct, "label": label, "done": done }).to_string();
-    // Use emit_str so the frontend receives a plain JSON string it can parse.
-    let _ = app.emit_str("clear-progress", json);
+    let payload = ClearProgress {
+        pct,
+        label: label.to_string(),
+        done,
+    };
+    // Emit directly to the clear-loading window (more reliable than a global
+    // broadcast when the window was created at runtime).
+    if let Some(win) = app.get_webview_window("clear-loading") {
+        let _ = win.emit("clear-progress", payload);
+    }
 }
 
 /// Tauri command: clear DSH cache. `mode` is `"deps"` or `"all"`.

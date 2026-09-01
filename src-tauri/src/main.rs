@@ -68,6 +68,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             launcher::start_dsh,
+            launcher::quit_app,
             launcher::get_dsh_url,
             launcher::get_log_history,
             launcher::get_dsh_version,

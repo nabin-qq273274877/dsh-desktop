@@ -78,9 +78,17 @@ if (!isMain) {
 
   document.getElementById("btn-cancel")?.addEventListener("click", async () => {
     try {
-      await invoke("plugin:window|exit");
+      // Kill DSH and quit the whole app, so clicking 退出 really stops the
+      // launcher instead of only closing the loading window (which would let
+      // DSH keep starting in the background).
+      await invoke("quit_app");
     } catch (e) {
-      await win.close();
+      // Fallback: close the loading window.
+      try {
+        await invoke("plugin:window|exit");
+      } catch (e2) {
+        await win.close();
+      }
     }
   });
 }

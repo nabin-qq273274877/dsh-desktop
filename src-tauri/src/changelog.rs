@@ -50,7 +50,11 @@ pub fn entries() -> Vec<ChangelogEntry> {
             version: "0.1.1".to_string(),
             title: "0.1.1".to_string(),
             changes: vec![
-                "首次公开版本:桌面启动器、插件安装/卸载/列表、配置导出/导入、自动更新。".to_string(),
+                "桌面启动器:内置 Node + pnpm dlx 启动 DeepSeek Harness。".to_string(),
+                "插件管理:安装 / 卸载 / 列表(工具窗口)。".to_string(),
+                "配置导出 / 导入(zip 打包 DSH 数据目录)。".to_string(),
+                "原生菜单(运行 / 查看 / 关于)与自动更新。".to_string(),
+                "使用 npmmirror 源以加速下载,并隔离 DSH_HOME 数据目录。".to_string(),
             ],
         },
     ]

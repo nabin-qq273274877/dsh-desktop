@@ -446,6 +446,17 @@ pub fn start_dsh(app: AppHandle) -> Result<(), String> {
     launch_dsh(&app)
 }
 
+/// Tauri command: kill DSH and quit the whole app. Used by the loading window's
+/// "退出" button so clicking it truly stops the launcher (and the DSH child
+/// process) instead of just closing the loading window and letting DSH start in
+/// the background.
+#[tauri::command]
+pub fn quit_app(app: AppHandle) -> Result<(), String> {
+    kill_dsh();
+    app.exit(0);
+    Ok(())
+}
+
 /// Tauri command: return the current DSH web URL (for the main window to embed).
 #[tauri::command]
 pub fn get_dsh_url() -> String {

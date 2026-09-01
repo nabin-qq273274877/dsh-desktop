@@ -15,9 +15,7 @@ const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
 const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
 const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
-const MENU_SETTINGS_LAUNCHER: &str = "settings_launcher";
-const MENU_SETTINGS_CHANNEL: &str = "settings_channel";
-const MENU_ABOUT_CHECK_UPDATE: &str = "about_check_update";
+const MENU_SETTINGS: &str = "settings";
 const MENU_ABOUT_DSH_VERSION: &str = "about_dsh_version";
 const MENU_ABOUT_DESKTOP: &str = "about_desktop";
 const MENU_ABOUT_CHANGELOG: &str = "about_changelog";
@@ -58,51 +56,37 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         )
         .build()?;
 
-    let settings_submenu = SubmenuBuilder::new(app, "设置")
-        .item(
-            &MenuItemBuilder::with_id(MENU_SETTINGS_LAUNCHER, "启动选项(npx / pnpm dlx)…")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id(MENU_SETTINGS_CHANNEL, "版本选择(latest / next / alpha)…")
-                .build(app)?,
-        )
-        .build()?;
-
-    // The "update available" indicator: created disabled; it is enabled and
-    // relabeled by the async update check when a new version is found.
-    let update_item = MenuItemBuilder::with_id(
-        MENU_ABOUT_UPDATE_AVAILABLE,
-        "正在检查新版本…",
-    )
-    .enabled(false)
-    .build(app)?;
-    *UPDATE_AVAILABLE_ITEM.lock().unwrap() = Some(update_item.clone());
+    // "设置" is a single menu item inside the 关于 group (not its own submenu).
+    let settings_item = MenuItemBuilder::with_id(MENU_SETTINGS, "设置…").build(app)?;
 
     let about_submenu = SubmenuBuilder::new(app, "关于")
-        .item(&update_item)
+        .item(&settings_item)
         .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_ABOUT_CHANGELOG, "更新日志…")
+                .build(app)?,
+        )
         .item(
             &MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "DeepSeek Harness 版本")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id(MENU_ABOUT_CHANGELOG, "更新日志…")
-                .build(app)?,
-        )
-        .separator()
-        .item(
             &MenuItemBuilder::with_id(MENU_ABOUT_DESKTOP, "关于 DeepSeek Harness Desktop")
-                .build(app)?,
-        )
-        .item(
-            &MenuItemBuilder::with_id(MENU_ABOUT_CHECK_UPDATE, "检查更新…")
                 .build(app)?,
         )
         .build()?;
 
+    // The "update available" indicator is a standalone top-level item at the
+    // far right of the menu bar (not inside 关于). Created disabled; it is
+    // enabled and relabeled by the async update check when a new version is
+    // found.
+    let update_item = MenuItemBuilder::with_id(MENU_ABOUT_UPDATE_AVAILABLE, "正在检查新版本…")
+        .enabled(false)
+        .build(app)?;
+    *UPDATE_AVAILABLE_ITEM.lock().unwrap() = Some(update_item.clone());
+
     let menu = MenuBuilder::new(app)
-        .items(&[&run_submenu, &view_submenu, &settings_submenu, &about_submenu])
+        .items(&[&run_submenu, &view_submenu, &about_submenu, &update_item])
         .build()?;
 
     Ok(menu)
@@ -162,8 +146,7 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
     let page = match id {
         MENU_RUN_INSTALL_PLUGIN => "install-plugin",
         MENU_VIEW_LIST_PLUGINS => "list-plugins",
-        MENU_SETTINGS_LAUNCHER | MENU_SETTINGS_CHANNEL => "settings",
-        MENU_ABOUT_CHECK_UPDATE => "check-update",
+        MENU_SETTINGS => "settings",
         MENU_ABOUT_DSH_VERSION => "dsh-version",
         MENU_ABOUT_CHANGELOG => "changelog",
         MENU_ABOUT_DESKTOP => "about",

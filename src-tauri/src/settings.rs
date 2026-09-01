@@ -24,11 +24,16 @@ pub const CHANNEL_LATEST: &str = "latest";
 pub const CHANNEL_NEXT: &str = "next";
 pub const CHANNEL_ALPHA: &str = "alpha";
 
+/// Valid close-behavior values.
+pub const CLOSE_QUIT: &str = "quit";
+pub const CLOSE_TRAY: &str = "tray";
+
 /// Default settings used until the on-disk file is read.
 fn default_settings() -> Settings {
     Settings {
         launcher: LAUNCHER_PNPM.to_string(),
         version_channel: CHANNEL_LATEST.to_string(),
+        close_behavior: CLOSE_QUIT.to_string(),
     }
 }
 
@@ -38,12 +43,24 @@ pub struct Settings {
     pub launcher: String,
     /// `"latest"` | `"next"` | `"alpha"`.
     pub version_channel: String,
+    /// `"quit"` (close main window exits) or `"tray"` (close hides to tray).
+    #[serde(default = "default_close_behavior")]
+    pub close_behavior: String,
+}
+
+fn default_close_behavior() -> String {
+    CLOSE_QUIT.to_string()
 }
 
 impl Settings {
     /// Whether the runner resolves to `npx` (defaults to pnpm for unknown values).
     pub fn uses_npx(&self) -> bool {
         self.launcher == LAUNCHER_NPX
+    }
+
+    /// Whether closing the main window should hide to tray instead of exiting.
+    pub fn close_to_tray(&self) -> bool {
+        self.close_behavior == CLOSE_TRAY
     }
 }
 
@@ -109,6 +126,14 @@ pub fn normalize_channel(v: &str) -> String {
     }
 }
 
+/// Validate a close-behavior value; falls back to `quit` on invalid input.
+pub fn normalize_close_behavior(v: &str) -> String {
+    match v {
+        CLOSE_TRAY => v.to_string(),
+        _ => CLOSE_QUIT.to_string(),
+    }
+}
+
 /// Tauri command: return the current settings as a JSON object.
 #[tauri::command]
 pub fn get_settings(app: AppHandle) -> Settings {
@@ -123,6 +148,7 @@ pub fn update_settings(
     app: AppHandle,
     launcher: Option<String>,
     version_channel: Option<String>,
+    close_behavior: Option<String>,
 ) -> Result<Settings, String> {
     let mut s = get(&app);
     if let Some(l) = launcher {
@@ -130,6 +156,9 @@ pub fn update_settings(
     }
     if let Some(c) = version_channel {
         s.version_channel = normalize_channel(&c);
+    }
+    if let Some(cb) = close_behavior {
+        s.close_behavior = normalize_close_behavior(&cb);
     }
     save(&app, &s)?;
     Ok(s)

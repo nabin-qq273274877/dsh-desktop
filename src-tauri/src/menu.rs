@@ -8,6 +8,7 @@
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const MENU_RUN_INSTALL_PLUGIN: &str = "run_install_plugin";
@@ -21,10 +22,16 @@ const MENU_ABOUT_DESKTOP: &str = "about_desktop";
 const MENU_ABOUT_CHANGELOG: &str = "about_changelog";
 /// Menu item that lights up when a new desktop version is available.
 const MENU_ABOUT_UPDATE_AVAILABLE: &str = "about_update_available";
+/// Tray "退出" item: kills DSH and exits the whole app.
+const MENU_QUIT: &str = "tray_quit";
 
 /// Handle to the "update available" menu item, so the async update check can
 /// enable it and rewrite its label once a newer version is found.
 static UPDATE_AVAILABLE_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
+
+/// Keeps the tray icon alive for the app's lifetime (dropping the handle would
+/// remove the tray icon).
+static TRAY: Mutex<Option<tauri::tray::TrayIcon>> = Mutex::new(None);
 
 /// Build the native app menu.
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -138,6 +145,11 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
             // ask it to start the update automatically.
             open_tools_window(app, "about");
             trigger_update_in_about(app);
+            return;
+        }
+        MENU_QUIT => {
+            // Kill DSH and quit the whole app.
+            let _ = crate::launcher::quit_app(app.clone());
             return;
         }
         _ => {}
@@ -298,4 +310,54 @@ fn open_tools_window(app: &AppHandle, page: &str) {
         });
         let _ = win;
     }
+}
+
+/// Show (and focus) the main window if it exists.
+pub fn show_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+/// Build the system tray icon with a right-click menu.
+///
+/// Double-clicking the icon shows the main window. The right-click menu reuses
+/// the same menu item ids as the native menu, so clicks are routed through
+/// `handle_menu_event`.
+pub fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
+    let mut tray = TrayIconBuilder::new()
+        .tooltip("DeepSeek Harness Desktop")
+        .show_menu_on_left_click(false);
+
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+
+    // Right-click menu.
+    let menu = MenuBuilder::new(app)
+        .item(&MenuItemBuilder::with_id(MENU_SETTINGS, "设置").build(app)?)
+        .item(&MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "查看版本").build(app)?)
+        .item(&MenuItemBuilder::with_id(MENU_RUN_INSTALL_PLUGIN, "安装插件").build(app)?)
+        .item(&MenuItemBuilder::with_id(MENU_VIEW_LIST_PLUGINS, "插件列表").build(app)?)
+        .separator()
+        .item(&MenuItemBuilder::with_id(MENU_RUN_EXPORT_CONFIG, "导出数据").build(app)?)
+        .item(&MenuItemBuilder::with_id(MENU_RUN_IMPORT_CONFIG, "导入数据").build(app)?)
+        .separator()
+        .item(&MenuItemBuilder::with_id(MENU_QUIT, "退出").build(app)?)
+        .build()?;
+    tray = tray.menu(&menu);
+
+    tray = tray.on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::DoubleClick { .. } = event {
+            // Double-click: bring the main window to the foreground.
+            show_main_window(tray.app_handle());
+        }
+    });
+
+    let tray = tray.build(app)?;
+    // Keep the tray alive for the app's lifetime.
+    *TRAY.lock().unwrap() = Some(tray.clone());
+    Ok(tray)
 }

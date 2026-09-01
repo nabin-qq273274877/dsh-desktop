@@ -105,6 +105,12 @@ fn main() {
                 menu::handle_menu_event(app, &id);
             });
 
+            // System tray icon (double-click opens main window; right-click menu
+            // reuses handle_menu_event via the app-level menu event handler).
+            if let Err(e) = menu::build_tray(&handle) {
+                eprintln!("failed to build tray: {e}");
+            }
+
             // NOTE: DSH launch is NOT started here. The frontend drives the
             // flow: it first checks for updates (auto-installs if found), then
             // calls `start_dsh` only when no update is pending. This avoids the
@@ -114,20 +120,33 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
+        .run(|app, event| {
             match event {
                 tauri::RunEvent::ExitRequested { .. } => {
                     // Ensure the DSH child process is terminated when the app exits.
                     launcher::kill_dsh();
                 }
                 tauri::RunEvent::WindowEvent { label, event, .. } => {
-                    // Kill DSH when the main window is closed/destroyed, so the
-                    // child process tree never leaks (even if the app keeps
-                    // running with other windows open).
                     if label == "main" {
                         match event {
-                            tauri::WindowEvent::CloseRequested { .. }
-                            | tauri::WindowEvent::Destroyed => {
+                            tauri::WindowEvent::CloseRequested { api, .. } => {
+                                // If "hide to tray" is enabled, closing the main
+                                // window just hides it (DSH keeps running) instead
+                                // of killing DSH / exiting. Otherwise, behave like
+                                // before: kill DSH.
+                                let close_to_tray =
+                                    crate::settings::get(app).close_to_tray();
+                                if close_to_tray {
+                                    api.prevent_close();
+                                    if let Some(win) = app.get_webview_window("main") {
+                                        let _ = win.hide();
+                                    }
+                                } else {
+                                    launcher::kill_dsh();
+                                }
+                            }
+                            tauri::WindowEvent::Destroyed => {
+                                // Window truly destroyed: make sure DSH is gone.
                                 launcher::kill_dsh();
                             }
                             _ => {}

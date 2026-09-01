@@ -191,6 +191,9 @@ function loadSettings() {
       document.querySelectorAll('input[name="channel"]').forEach((r) => {
         r.checked = r.value === s.version_channel;
       });
+      document.querySelectorAll('input[name="close"]').forEach((r) => {
+        r.checked = r.value === s.close_behavior;
+      });
     })
     .catch((e) => {
       if (status) status.textContent = "读取设置失败: " + e;
@@ -200,11 +203,16 @@ function loadSettings() {
 document.getElementById("btn-save-settings")?.addEventListener("click", async () => {
   const launcher = document.querySelector('input[name="launcher"]:checked')?.value;
   const channel = document.querySelector('input[name="channel"]:checked')?.value;
+  const close = document.querySelector('input[name="close"]:checked')?.value;
   const status = document.getElementById("settings-status");
   if (status) status.textContent = "正在保存…";
   try {
-    await invoke("update_settings", { launcher, versionChannel: channel });
-    if (status) status.textContent = "已保存(重启 DSH 后生效)";
+    await invoke("update_settings", {
+      launcher,
+      versionChannel: channel,
+      closeBehavior: close,
+    });
+    if (status) status.textContent = "已保存(关闭行为立即生效;启动选项与版本通道重启 DSH 后生效)";
   } catch (e) {
     if (status) status.textContent = "保存失败: " + e;
   }

@@ -71,6 +71,19 @@
         </label>
       </div>
 
+      <h3>关闭主窗口时</h3>
+      <p class="hint">关闭主窗口时选择退出程序还是隐藏到系统托盘继续运行。</p>
+      <div class="row">
+        <label class="radio-label">
+          <input type="radio" name="close" value="quit" />
+          退出程序 <span class="muted">(关闭即退出)</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="close" value="tray" />
+          隐藏到托盘 <span class="muted">(DSH 继续运行)</span>
+        </label>
+      </div>
+
       <div class="row">
         <button id="btn-save-settings" class="btn" type="button">保存设置</button>
         <span id="settings-status" class="hint inline-hint"></span>

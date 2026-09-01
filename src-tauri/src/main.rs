@@ -85,6 +85,7 @@ fn main() {
             launcher::list_plugins,
             launcher::install_plugin,
             launcher::remove_plugin,
+            launcher::update_plugin,
             launcher::export_config,
             launcher::import_config,
             check_update,

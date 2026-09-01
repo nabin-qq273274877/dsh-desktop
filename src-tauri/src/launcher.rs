@@ -729,6 +729,32 @@ pub async fn remove_plugin(app: AppHandle, package: String) -> Result<String, St
     .await
 }
 
+/// Tauri command: update a plugin to its latest version.
+///
+/// DSH updates a plugin the same way it installs it — `add <pkg>@latest` — so
+/// the pinned package is refreshed to the latest published version.
+#[tauri::command]
+pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, String> {
+    let pkg = package.trim().to_string();
+    if pkg.is_empty() {
+        return Err("package name is empty".to_string());
+    }
+    // Scope packages (@scope/name) need `@scope/name@latest`, so append the tag
+    // after the full package name.
+    let target = format!("{pkg}@latest");
+    run_dsh_command_async(
+        app,
+        vec![
+            "plugin".into(),
+            "--profile".into(),
+            "web".into(),
+            "add".into(),
+            target,
+        ],
+    )
+    .await
+}
+
 /// Export the DSH home directory to a zip archive chosen by the user.
 #[tauri::command]
 pub fn export_config(app: AppHandle) -> Result<String, String> {

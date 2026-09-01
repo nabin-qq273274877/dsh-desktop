@@ -104,7 +104,6 @@ input[type="text"]:focus {
 .plugin-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
   background: var(--panel);
@@ -122,6 +121,19 @@ input[type="text"]:focus {
 .plugin-item .ver {
   color: var(--muted);
   margin-left: 4px;
+}
+
+.plugin-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.btn-update {
+  background: var(--accent);
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .output {

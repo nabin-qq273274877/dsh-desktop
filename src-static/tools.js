@@ -117,15 +117,51 @@ function buildPluginItem(p) {
   ver.className = "ver";
   ver.textContent = "@" + p.version;
 
-  const btn = document.createElement("button");
-  btn.className = "btn btn-danger";
-  btn.textContent = "卸载";
-  btn.addEventListener("click", () => removePlugin(p.name));
+  const actions = document.createElement("span");
+  actions.className = "plugin-actions";
+
+  const updateBtn = document.createElement("button");
+  updateBtn.className = "btn btn-update";
+  updateBtn.textContent = "更新";
+  updateBtn.addEventListener("click", () => updatePlugin(p.name, updateBtn));
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "btn btn-danger";
+  removeBtn.textContent = "卸载";
+  removeBtn.addEventListener("click", () => removePlugin(p.name));
+
+  actions.appendChild(updateBtn);
+  actions.appendChild(removeBtn);
 
   item.appendChild(name);
   item.appendChild(ver);
-  item.appendChild(btn);
+  item.appendChild(actions);
   return item;
+}
+
+async function updatePlugin(name, btn) {
+  if (!window.confirm(`确定要更新插件「${name}」到 latest 版本吗?`)) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "更新中…";
+  try {
+    await invoke("update_plugin", { package: name });
+    btn.textContent = "已更新";
+    await refreshPlugins();
+  } catch (e) {
+    btn.textContent = "更新失败";
+    // Let the user retry; show the error in the raw output box area.
+    const listEl = document.getElementById("plugin-list");
+    if (listEl) {
+      const err = document.createElement("div");
+      err.textContent = "更新失败: " + e;
+      err.className = "output err";
+      listEl.appendChild(err);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 async function removePlugin(name) {

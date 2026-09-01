@@ -33,7 +33,9 @@ fn default_settings() -> Settings {
     Settings {
         launcher: LAUNCHER_PNPM.to_string(),
         version_channel: CHANNEL_LATEST.to_string(),
-        close_behavior: CLOSE_QUIT.to_string(),
+        // Default to hiding to tray when the main window is closed (no setting
+        // saved yet), so DSH keeps running in the background.
+        close_behavior: CLOSE_TRAY.to_string(),
     }
 }
 
@@ -49,7 +51,7 @@ pub struct Settings {
 }
 
 fn default_close_behavior() -> String {
-    CLOSE_QUIT.to_string()
+    CLOSE_TRAY.to_string()
 }
 
 impl Settings {

@@ -799,6 +799,7 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     // Stop DSH first so files aren't locked.
     kill_dsh();
     push_diag("[clear] killed dsh", &mut diag);
+    emit_log(&app, "[info] 正在清除 DSH 缓存,请稍候…");
 
     let data_dir = app
         .path()

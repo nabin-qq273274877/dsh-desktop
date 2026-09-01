@@ -309,27 +309,41 @@ fn handle_clear_cache(app: AppHandle) {
         }
     }
 
-    // Run the clear synchronously on the current (menu event) thread. Deleting
-    // the store may block the UI briefly, but it guarantees the operation runs
-    // (background threads + async nesting were silently dropping this).
-    let result = crate::launcher::clear_dsh_cache(app.clone(), mode.to_string());
-    match result {
-        Ok(msg) => {
-            let _ = app
-                .dialog()
-                .message(msg)
-                .title("清除 DSH 缓存")
-                .blocking_show();
-        }
-        Err(e) => {
-            let _ = app
-                .dialog()
-                .message(e)
-                .title("清除 DSH 缓存")
-                .kind(MessageDialogKind::Error)
-                .blocking_show();
-        }
+    // Show the loading window (if it still exists) so the user sees the
+    // "正在清除" message and, afterwards, the DSH re-download progress.
+    if let Some(loading) = app.get_webview_window("loading") {
+        let _ = loading.show();
+        let _ = loading.set_focus();
     }
+
+    // Run the clear on a background thread so deleting the (large) store does
+    // NOT block the UI. clear_dsh_cache restarts DSH itself when done.
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        let result = crate::launcher::clear_dsh_cache(app2.clone(), mode.to_string());
+        // Show the outcome dialog on the main thread (native dialogs need it).
+        let app3 = app2.clone();
+        let _ = app2.run_on_main_thread(move || {
+            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+            match result {
+                Ok(msg) => {
+                    let _ = app3
+                        .dialog()
+                        .message(msg)
+                        .title("清除 DSH 缓存")
+                        .blocking_show();
+                }
+                Err(e) => {
+                    let _ = app3
+                        .dialog()
+                        .message(e)
+                        .title("清除 DSH 缓存")
+                        .kind(MessageDialogKind::Error)
+                        .blocking_show();
+                }
+            }
+        });
+    });
 }
 
 /// Toggle the DevTools inspector on the main window (if present).

@@ -104,6 +104,40 @@ if (!isMain) {
       }
     }
   });
+
+  // "复制日志": copy whatever is currently shown in the log box to the clipboard.
+  const copyBtn = document.getElementById("btn-copy-log");
+  copyBtn?.addEventListener("click", async () => {
+    if (!logEl) return;
+    const text = logEl.innerText;
+    const original = copyBtn.textContent;
+    let copied = false;
+
+    try {
+      // Prefer the async Clipboard API (works in WebView2); fall back below.
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch (e) {
+      // Fallback for restricted contexts.
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (e2) {
+        copied = false;
+      }
+    }
+
+    copyBtn.textContent = copied ? "已复制" : "复制失败";
+    copyBtn.disabled = true;
+    setTimeout(() => {
+      copyBtn.textContent = original;
+      copyBtn.disabled = false;
+    }, 1500);
+  });
 }
 
 // ---------- main window behavior ----------

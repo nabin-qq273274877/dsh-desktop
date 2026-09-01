@@ -154,7 +154,11 @@ fn main() {
                                         let _ = win.hide();
                                     }
                                 } else {
-                                    launcher::kill_dsh();
+                                    // "关闭退出程序": exit the whole app (this
+                                    // also tears down the tray and kills DSH via
+                                    // ExitRequested/Exit). Just killing DSH would
+                                    // leave the app process + tray running.
+                                    app.exit(0);
                                 }
                             }
                             tauri::WindowEvent::Destroyed => {

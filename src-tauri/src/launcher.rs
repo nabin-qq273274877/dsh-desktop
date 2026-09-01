@@ -581,6 +581,9 @@ pub fn kill_dsh() {
         }
     }
     *CURRENT_PORT.lock().unwrap() = None;
+    // Once DSH is killed it is no longer ready; this lets a subsequent
+    // launch_dsh() actually restart it (e.g. after clearing the cache).
+    READY.store(false, Ordering::SeqCst);
 }
 
 /// Tauri command: frontend can request a (re)start of the DSH launch flow.

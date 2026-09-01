@@ -812,16 +812,22 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     let trace = |s: &str| {
         if let Ok(d) = app.path().app_data_dir() {
             let p = d.join("dsh-desktop").join("clear-trace.log");
-            let _ = std::fs::write(&p, s);
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&p) {
+                let _ = writeln!(f, "{s}");
+            }
         }
     };
-    trace(&format!("clear start mode={mode}"));
+    trace(&format!("=== clear start mode={mode}"));
 
     // Stop DSH first so files aren't locked.
     kill_dsh();
+    // Give the killed process tree a moment to release file handles before we
+    // delete the store (otherwise remove_dir_all fails with a lock on Windows).
+    std::thread::sleep(std::time::Duration::from_millis(1000));
     emit_clear_progress(&app, 10, "正在停止 DSH 进程…", false);
     emit_log(&app, "[info] 正在清除 DSH 缓存,请稍候…");
-    trace("killed dsh");
+    trace("killed dsh + waited");
 
     let data_dir = app
         .path()
@@ -840,9 +846,11 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     } else {
         remove_dir(&profile.join("node_modules"), "插件依赖 (node_modules)", &mut removed, &mut failed);
     }
-    emit_clear_progress(&app, 30, "已清除插件依赖…", false);
+    emit_clear_progress(&app, 30, "正在删除依赖缓存(文件较多,请耐心)…", false);
 
-    remove_dir(&store, "pnpm 依赖缓存 (store)", &mut removed, &mut failed);
+    // Delete the (large) store by first renaming it (instant) so the progress
+    // bar can advance immediately, then delete the renamed dir in the background.
+    let removed_store = remove_dir_fast(&store, "pnpm 依赖缓存 (store)");
     emit_clear_progress(&app, 60, "已清除 pnpm 依赖缓存…", false);
 
     remove_dir(&cache, "下载缓存 (cache)", &mut removed, &mut failed);
@@ -853,8 +861,15 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     remove_dir(&dsh_dir.join("pnpm"), "pnpm dlx 缓存", &mut removed, &mut failed);
     emit_clear_progress(&app, 85, "已清除 dlx 缓存…", false);
 
+    if !removed_store.is_empty() {
+        removed.push(removed_store);
+    }
+
+    trace(&format!("removed={removed:?} failed={failed:?}"));
+
     if !failed.is_empty() {
         emit_clear_progress(&app, 100, "清除失败", true);
+        trace(&format!("FAILED: {}", failed.join(" | ")));
         return Err(format!(
             "部分清除失败:\n{}",
             failed.join("\n")
@@ -889,6 +904,33 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     // Exit the current process so the single-instance mutex is released before
     // the new instance starts.
     std::process::exit(0);
+}
+
+/// Delete a (potentially large) directory quickly by first renaming it to a
+/// temporary name (instant), then deleting the renamed dir in a background
+/// thread. Returns the label if renamed+queued, or an empty string if it
+/// doesn't exist / couldn't be renamed (caller can fall back).
+fn remove_dir_fast(dir: &std::path::Path, label: &str) -> String {
+    if !dir.exists() {
+        return format!("{label}(不存在)");
+    }
+    // Rename to a temp sibling (same filesystem → instant, no copy).
+    let tmp = dir.with_extension("deleting");
+    let _ = std::fs::remove_dir_all(&tmp); // clear any previous leftover
+    if std::fs::rename(dir, &tmp).is_ok() {
+        let tmp = tmp.to_path_buf();
+        // Delete in the background so the caller can advance progress immediately.
+        std::thread::spawn(move || {
+            let _ = std::fs::remove_dir_all(&tmp);
+        });
+        label.to_string()
+    } else {
+        // Rename failed (locked?); fall back to synchronous delete.
+        match std::fs::remove_dir_all(dir) {
+            Ok(_) => label.to_string(),
+            Err(e) => format!("{label}: {e}"),
+        }
+    }
 }
 
 /// Recursively delete `dir`, recording the outcome into `removed`/`failed`.

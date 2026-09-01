@@ -469,10 +469,9 @@ fn poll_ready(app: AppHandle) {
 
     let mut attempts = 0u32;
     loop {
-        attempts += 1;
-        std::thread::sleep(std::time::Duration::from_millis(800));
-
-        // If the child has exited, DSH can never become ready — stop polling.
+        // Check for child exit *before* sleeping so a crash is detected as soon
+        // as possible (and we stop emitting "[waiting]" spam that would bury the
+        // real error message).
         let exited = CHILD
             .lock()
             .unwrap()
@@ -489,13 +488,13 @@ fn poll_ready(app: AppHandle) {
                 // Reuse the menu helper to surface the plugin list window.
                 crate::menu::open_plugin_list(&app);
             } else {
-                emit_log(
-                    &app,
-                    "[hint] 可点击下方「重试启动」再次尝试。",
-                );
+                emit_log(&app, "[hint] 可点击下方「重试启动」再次尝试。");
             }
             return;
         }
+
+        attempts += 1;
+        std::thread::sleep(std::time::Duration::from_millis(800));
 
         if let Some(client) = &client {
             match client.get(&url).send() {
@@ -506,8 +505,14 @@ fn poll_ready(app: AppHandle) {
                     return;
                 }
                 _ => {
-                    if attempts % 5 == 0 {
-                        emit_log(&app, &format!("[waiting] {url} not ready yet..."));
+                    // "waiting" is only a faint heartbeat so the user knows the
+                    // app is still working (deps may take a while to download).
+                    // Emit it rarely and never spam it, so a real error isn't
+                    // pushed off-screen.
+                    if attempts == 5 {
+                        emit_log(&app, &format!("[waiting] {url} not ready yet,正在下载依赖,请稍候…"));
+                    } else if attempts % 50 == 0 {
+                        emit_log(&app, &format!("[waiting] {url} 仍在等待,请耐心等待…"));
                     }
                 }
             }

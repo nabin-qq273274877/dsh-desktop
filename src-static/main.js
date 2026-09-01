@@ -8,13 +8,25 @@ const win = __TAURI__.window.getCurrentWindow();
 const isMain = win.label === "main";
 const logEl = document.getElementById("log");
 
+// Once an error line has been appended, we stop auto-scrolling to the bottom so
+// the real error (and its stack) stays visible instead of being pushed off by
+// "waiting" heartbeat lines.
+let stickToError = false;
+
 function appendLog(line, kind = "") {
   if (!logEl) return;
   const div = document.createElement("div");
   if (kind) div.className = kind;
   div.textContent = line;
   logEl.appendChild(div);
-  logEl.scrollTop = logEl.scrollHeight;
+
+  if (kind === "line-err" && !stickToError) {
+    // Jump to the error so it's visible; afterwards keep it on screen.
+    stickToError = true;
+    logEl.scrollTop = div.offsetTop;
+  } else if (!stickToError) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
 }
 
 function classify(line) {
@@ -72,6 +84,7 @@ if (!isMain) {
 
   document.getElementById("btn-retry")?.addEventListener("click", async () => {
     if (logEl) logEl.innerHTML = "";
+    stickToError = false;
     appendLog("正在重启 DSH…", "");
     await startDsh();
   });

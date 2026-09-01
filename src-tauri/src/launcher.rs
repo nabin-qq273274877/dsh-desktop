@@ -843,6 +843,11 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
 
     if mode == "all" {
         remove_dir(&profile, "插件环境 (profiles/web)", &mut removed, &mut failed);
+        // Also remove the shared profile fallback node_modules (it can contain
+        // real dirs like `typebox` that DSH expects to be symlinks — a leftover
+        // from a previously corrupted profile).
+        let shared_nm = dsh_dir.join("dsh-home").join("profiles").join("node_modules");
+        remove_dir(&shared_nm, "共享模块目录 (profiles/node_modules)", &mut removed, &mut failed);
     } else {
         remove_dir(&profile.join("node_modules"), "插件依赖 (node_modules)", &mut removed, &mut failed);
     }

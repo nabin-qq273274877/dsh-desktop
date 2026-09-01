@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// The host DSH binds to. We bind to loopback only for local use.
 const DSH_HOST: &str = "127.0.0.1";
@@ -812,8 +812,11 @@ pub async fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, Str
             ));
         }
 
-        // Automatically restart DSH (fresh deps) after a successful clear.
-        let _ = launch_dsh(&app2);
+        // Automatically restart DSH after a successful clear by (re)creating a
+        // fresh loading window — its frontend runs `start_dsh`, so the user sees
+        // the dependency re-download. We don't call launch_dsh here directly
+        // because that would double-start (the loading window also starts it).
+        restart_via_loading_window(&app2);
 
         Ok(format!(
             "清除完成(已删除):\n{}\n\n用户数据(会话/凭据/设置)已保留,DSH 已自动重启。",
@@ -826,6 +829,35 @@ pub async fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, Str
     })
     .await
     .map_err(|e| format!("clear task failed: {e}"))?
+}
+
+/// Restart DSH by (re)creating the loading window. Its `main.js` automatically
+/// calls `start_dsh` on load, which spawns DSH and shows the download progress.
+///
+/// Window creation/destruction must happen on the main thread, so this is
+/// scheduled via `run_on_main_thread`.
+fn restart_via_loading_window(app: &AppHandle) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        // Destroy any existing loading window so a fresh one (and its start_dsh
+        // flow) is created.
+        if let Some(old) = app.get_webview_window("loading") {
+            let _ = old.destroy();
+        }
+        // Give the old window a moment to tear down before recreating it.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let url = WebviewUrl::App("index.html".into());
+        let builder = WebviewWindowBuilder::new(&app, "loading", url)
+            .title("DeepSeek Harness Desktop")
+            .inner_size(560.0, 420.0)
+            .resizable(false)
+            .maximizable(false)
+            .center()
+            .decorations(true)
+            .visible(true);
+        let _ = builder.build();
+    });
 }
 
 /// Recursively delete `dir`, recording the outcome into `removed`/`failed`.

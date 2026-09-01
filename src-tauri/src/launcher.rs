@@ -183,6 +183,12 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
     let pnpm_store = dsh_dir.join("store");
     let dsh_home = dsh_dir.join("dsh-home");
 
+    // Ensure the data dirs exist (pnpm lstat's `$HOME`/store; a missing dir on
+    // macOS surfaces as `ENOENT: lstat .../com.dsh.desktop`).
+    let _ = std::fs::create_dir_all(&dsh_home);
+    let _ = std::fs::create_dir_all(&pnpm_store);
+    let _ = std::fs::create_dir_all(dsh_dir.join("cache"));
+
     let dsh_pkg = format!("@deepseek-ai/dsh@{}", settings.version_channel);
 
     let mut cmd = Command::new(&node_path);
@@ -295,6 +301,17 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     let dsh_dir = data_dir.join("dsh-desktop");
     let pnpm_store = dsh_dir.join("store");
     let dsh_home = dsh_dir.join("dsh-home");
+
+    // Ensure the data directories exist before handing them to pnpm. On macOS
+    // (and fresh installs) `Library/Application Support/<id>` may not exist yet,
+    // and pnpm lstat's `$HOME`/store — a missing dir surfaces as
+    // `ENOENT: lstat .../com.dsh.desktop` and the launch aborts.
+    std::fs::create_dir_all(&dsh_home)
+        .map_err(|e| format!("failed to create DSH home dir {}: {e}", dsh_home.display()))?;
+    std::fs::create_dir_all(&pnpm_store)
+        .map_err(|e| format!("failed to create pnpm store dir {}: {e}", pnpm_store.display()))?;
+    std::fs::create_dir_all(dsh_dir.join("cache"))
+        .map_err(|e| format!("failed to create cache dir: {e}"))?;
 
     let runner = if settings.uses_npx() { "npx" } else { "pnpm" };
     emit_log(

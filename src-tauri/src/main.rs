@@ -123,6 +123,16 @@ fn main() {
                 eprintln!("failed to build tray: {e}");
             }
 
+            // Create the data directory layout up front (idempotent) so a
+            // FIRST boot never races directory initialization against the
+            // pnpm/DSH child process. An unwritable/locked data dir surfaces
+            // here (logged) and again — with a real error — when the
+            // launcher runs, instead of aborting the child with a cryptic
+            // ENOENT.
+            if let Err(e) = launcher::ensure_data_dirs(&handle) {
+                eprintln!("failed to prepare data dirs: {e}");
+            }
+
             // NOTE: DSH launch is NOT started here. The frontend drives the
             // flow: it first checks for updates (auto-installs if found), then
             // calls `start_dsh` only when no update is pending. This avoids the

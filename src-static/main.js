@@ -48,10 +48,26 @@ if (!isMain) {
   // Retry button starts disabled; it is only enabled when startup fails.
   if (retryBtn) retryBtn.disabled = true;
 
+  // The backend recreates this window with ?autostart=0 when DSH died after
+  // being ready: a supervisor-owned restart is already in flight, so this
+  // window must NOT call start_dsh again (it would kill and race the
+  // in-flight restart).
+  const autoStart = new URLSearchParams(window.location.search).get("autostart") !== "0";
+
   // Register log listeners before anything else so no lines are missed.
   listen("dsh-log", (event) => {
     appendLog(event.payload, classify(event.payload));
   });
+
+  // Replay log lines the backend emitted before this window's JS listener was
+  // ready (the backend buffers them for exactly this case — e.g. when the
+  // loading window is recreated after DSH died mid-session).
+  invoke("get_log_history")
+    .then((lines) => {
+      // Only the tail matters; keep the error lines visible.
+      for (const line of lines.slice(-200)) appendLog(line, classify(line));
+    })
+    .catch(() => {});
 
   listen("dsh-ready", async (event) => {
     const url = event.payload || "http://127.0.0.1:3080";
@@ -86,8 +102,16 @@ if (!isMain) {
   }
 
   // No version check / update check here: updates are handled from the
-  // "关于" menu. Just start DSH immediately so loading is never blocked.
-  startDsh();
+  // "关于" menu. On a normal boot, start DSH immediately so loading is never
+  // blocked; in a recovery window (?autostart=0) the supervisor already owns
+  // the restart, so we only inform the user and keep the manual retry
+  // button available.
+  if (autoStart) {
+    startDsh();
+  } else {
+    appendLog("DSH 服务异常退出,正在自动恢复…", "");
+    if (retryBtn) retryBtn.disabled = false;
+  }
 
   document.getElementById("btn-retry")?.addEventListener("click", async () => {
     if (logEl) logEl.innerHTML = "";

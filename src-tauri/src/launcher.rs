@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -39,6 +39,40 @@ static PLUGIN_CONFLICT: AtomicBool = AtomicBool::new(false);
 /// must NOT open the plugin list — uninstalling won't help — and should instead
 /// point the user at the clear-cache / reinstall flow.
 static PLUGIN_MISSING: AtomicBool = AtomicBool::new(false);
+
+/// Launch-session generation. Bumped on every (re)start request so stale
+/// supervisor threads from earlier sessions stop touching the child, the
+/// events, or the readiness flag — only the newest session's supervisor may
+/// drive the launch.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Budget of automatic restarts after DSH had been ready and then died. Reset
+/// once the server stays healthy for 5 minutes, so a crash loop eventually
+/// stops and defers to the manual "重试启动" button.
+static AUTO_RESTARTS: AtomicU32 = AtomicU32::new(0);
+
+/// Serializes kill → spawn sequences so two rapid `start_dsh` calls can never
+/// interleave their child-process handoffs.
+static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
+
+/// Maximum automatic re-spawn attempts while DSH is still booting (before the
+/// first ready signal). A first boot downloads the full dependency tree, where
+/// a single transient network error used to abort the launch for good.
+const MAX_BOOT_RETRIES: u32 = 3;
+
+
+/// Overall boot timeout — dependency downloads on a slow first boot can take
+/// a while, but not forever.
+const BOOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1200);
+
+/// Iterations (× 800ms ≈ 3 min) the root page must serve 200 with the child
+/// alive before the legacy readiness fallback fires (DSH builds without the
+/// `/api` probe).
+const LEGACY_READY_ITERATIONS: u32 = 225;
+
+/// Watchdog iterations (× 5s = 60s) a live-but-unresponsive server is given
+/// before it is treated as broken and restarted.
+const WATCHDOG_UNHEALTHY_LIMIT: u32 = 12;
 
 /// Find a free TCP port by binding to `127.0.0.1:0` and letting the OS choose.
 fn find_free_port() -> Result<u16, String> {
@@ -97,7 +131,7 @@ pub(crate) fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
 
     for c in &candidates {
         if c.exists() {
-            return Ok(c.clone());
+            return Ok(strip_extended_length_path(c));
         }
     }
     Err(format!(
@@ -108,6 +142,30 @@ pub(crate) fn bundled_node_path(app: &AppHandle) -> Result<PathBuf, String> {
             .collect::<Vec<_>>()
             .join("\n  ")
     ))
+}
+
+/// Strip the Windows extended-length path prefix (`\\?\`) so the path can be
+/// passed to child processes that don't tolerate it. Node v22.23.2's
+/// `realpathSync` regresses on `\\?\`-prefixed paths (EISDIR on the drive
+/// root when resolving the main module), so the bundled node/pnpm/npx paths
+/// must be plain. `\\?\UNC\server\share` → `\\server\share`. No-op on non-
+/// Windows or already-plain paths.
+fn strip_extended_length_path(p: &PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = p.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{}", rest));
+        }
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = p;
+    }
+    p.clone()
 }
 
 /// The Node distribution root directory (contains `bin/node` on Unix, or
@@ -199,6 +257,37 @@ pub(crate) fn dsh_home_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("dsh-desktop").join("dsh-home"))
 }
 
+/// Idempotently create the whole `<app-data>/dsh-desktop` layout (`dsh-home`,
+/// `store`, `cache`) and return the `dsh-desktop` directory.
+///
+/// Called from app setup (before any window logic depends on it) and from
+/// every launch/subcommand path, so a *first* boot never races directory
+/// initialization against the pnpm/DSH child. Unlike the previous inline
+/// `let _ = create_dir_all(...)` calls, errors propagate: a missing/locked
+/// data dir is the root cause of many "random" first-boot pnpm ENOENT
+/// crashes and must surface loudly instead of killing the child silently.
+pub(crate) fn ensure_data_dirs(app: &AppHandle) -> Result<PathBuf, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    // Strip the `\\?\` prefix so paths passed to node/pnpm via env vars
+    // (PNPM_HOME, DSH_HOME, XDG_*, …) don't trip Node v22.23.2's realpathSync
+    // regression (see `strip_extended_length_path`).
+    let data_dir = strip_extended_length_path(&data_dir);
+    let dsh_dir = data_dir.join("dsh-desktop");
+    for sub in ["dsh-home", "store", "cache"] {
+        let dir = dsh_dir.join(sub);
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            format!(
+                "failed to create data dir {}: {e} (请检查磁盘权限/杀毒软件锁定)",
+                dir.display()
+            )
+        })?;
+    }
+    Ok(dsh_dir)
+}
+
 /// Build a `Command` that runs `@deepseek-ai/dsh <args>` through the configured
 /// runner (`node pnpm.mjs dlx` or bundled `npx`), with the isolated
 /// store/cache/DSH-home env, suitable for one-shot subcommands (`--version`,
@@ -208,19 +297,13 @@ pub(crate) fn dsh_subcommand(app: &AppHandle, args: &[&str]) -> Result<Command, 
     let settings = crate::settings::get(app);
     let node_path = bundled_node_path(app)?;
 
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    let dsh_dir = data_dir.join("dsh-desktop");
+    // Ensure the data dirs exist (pnpm lstat's `$HOME`/store; a missing dir on
+    // macOS surfaces as `ENOENT: lstat .../com.dsh.desktop`). Unlike the old
+    // `let _ = create_dir_all(...)` calls, failures propagate — a locked or
+    // unwritable data dir is a real error the caller must see.
+    let dsh_dir = ensure_data_dirs(app)?;
     let pnpm_store = dsh_dir.join("store");
     let dsh_home = dsh_dir.join("dsh-home");
-
-    // Ensure the data dirs exist (pnpm lstat's `$HOME`/store; a missing dir on
-    // macOS surfaces as `ENOENT: lstat .../com.dsh.desktop`).
-    let _ = std::fs::create_dir_all(&dsh_home);
-    let _ = std::fs::create_dir_all(&pnpm_store);
-    let _ = std::fs::create_dir_all(dsh_dir.join("cache"));
 
     let dsh_pkg = format!("@deepseek-ai/dsh@{}", settings.version_channel);
 
@@ -293,7 +376,42 @@ fn emit_log(app: &AppHandle, line: &str) {
             hist.drain(0..excess);
         }
     }
+    append_log_file(app, &line);
     let _ = app.emit("dsh-log", line);
+}
+
+/// Append a line to the per-day log file under `<app-data>/dsh-desktop/logs/`,
+/// named `YYYY-MM-DD.log` (local time), so each run's full DSH stdout/stderr is
+/// persisted for offline troubleshooting. Failures are silent — logging must
+/// never break the launch pipeline.
+fn append_log_file(app: &AppHandle, line: &str) {
+    use std::io::Write;
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return;
+    };
+    let logs_dir = data_dir.join("dsh-desktop").join("logs");
+    if std::fs::create_dir_all(&logs_dir).is_err() {
+        return;
+    }
+    let now = chrono::Local::now();
+    let path = logs_dir.join(format!("{}.log", now.format("%Y-%m-%d")));
+    let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&path) else {
+        return;
+    };
+    let _ = writeln!(f, "{} {}", now.format("%H:%M:%S"), line);
+}
+
+/// Append a diagnostic trace line to `<app-data>/dsh-desktop/launch-trace.log`
+/// (mirrors `clear-trace.log`): lets field debugging see the launch-pipeline
+/// steps even when no window is attached yet.
+fn trace_launch(app: &AppHandle, msg: &str) {
+    use std::io::Write;
+    if let Ok(d) = app.path().app_data_dir() {
+        let p = d.join("dsh-desktop").join("launch-trace.log");
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&p) {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
 }
 
 /// Notify the frontend that DSH is ready and open the main window.
@@ -320,40 +438,39 @@ fn emit_ready(app: &AppHandle) {
     crate::menu::spawn_startup_update_check(app.clone());
 }
 
-/// Start the DSH child process using the bundled Node binary and stream logs.
-pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
-    if READY.load(Ordering::SeqCst) {
-        return Ok(());
-    }
+/// Spawn the DSH child process using the bundled Node binary: choose a fresh
+/// port, ensure the data dirs exist, build the runner command, start it with
+/// piped output, and stream its logs.
+///
+/// Readiness is NOT established here — the caller's supervisor thread probes
+/// the web server and emits `dsh-ready` once the API layer is truly up (see
+/// `probe`).
+fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
+    trace_launch(app, "spawn_dsh: entry");
+    // Fresh conflict detection for this process run: stale flags from a
+    // previous (failed) run must not hijack this run's failure handling.
+    PLUGIN_CONFLICT.store(false, Ordering::SeqCst);
+    PLUGIN_MISSING.store(false, Ordering::SeqCst);
 
     let settings = crate::settings::get(app);
     let node_path = bundled_node_path(app)?;
 
-    // Choose a free port so we never collide with a fixed port already in use.
+    // Choose a free port so we never collide with a fixed port already in
+    // use. (The port is later validated with a strong readiness probe, so the
+    // small TOCTOU window between dropping this listener and DSH's bind can
+    // never be mistaken for readiness, and an EADDRINUSE crash is retried on
+    // a different port.)
     let port = find_free_port()?;
     *CURRENT_PORT.lock().unwrap() = Some(port);
+    trace_launch(app, &format!("spawn_dsh: port {port} chosen"));
 
-    // Use an isolated store/cache so we never touch the user's global pnpm/npm.
-    // Everything lives under a single "dsh-desktop" directory for easy
-    // discovery, with "store" and "cache" subdirectories.
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    let dsh_dir = data_dir.join("dsh-desktop");
+    // Use an isolated store/cache so we never touch the user's global pnpm/npm
+    // (see dsh_subcommand). Creating the dirs here is what makes a *first*
+    // boot work: pnpm lstat's `$HOME`/store and a missing dir aborts the
+    // launch with ENOENT.
+    let dsh_dir = ensure_data_dirs(app)?;
     let pnpm_store = dsh_dir.join("store");
     let dsh_home = dsh_dir.join("dsh-home");
-
-    // Ensure the data directories exist before handing them to pnpm. On macOS
-    // (and fresh installs) `Library/Application Support/<id>` may not exist yet,
-    // and pnpm lstat's `$HOME`/store — a missing dir surfaces as
-    // `ENOENT: lstat .../com.dsh.desktop` and the launch aborts.
-    std::fs::create_dir_all(&dsh_home)
-        .map_err(|e| format!("failed to create DSH home dir {}: {e}", dsh_home.display()))?;
-    std::fs::create_dir_all(&pnpm_store)
-        .map_err(|e| format!("failed to create pnpm store dir {}: {e}", pnpm_store.display()))?;
-    std::fs::create_dir_all(dsh_dir.join("cache"))
-        .map_err(|e| format!("failed to create cache dir: {e}"))?;
 
     let runner = if settings.uses_npx() { "npx" } else { "pnpm" };
     emit_log(
@@ -433,9 +550,11 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     }
 
     let mut child = cmd.spawn().map_err(|e| {
+        trace_launch(app, &format!("spawn_dsh: cmd.spawn FAILED: {e}"));
         emit_log(app, &format!("[error] failed to spawn DSH: {e}"));
         e.to_string()
     })?;
+    trace_launch(app, &format!("spawn_dsh: child pid {}", child.id()));
 
     // On Windows, tie the child to a kill-on-close Job Object so that if this
     // launcher exits by ANY path (normal close, crash, or being killed), the
@@ -459,10 +578,6 @@ pub fn launch_dsh(app: &AppHandle) -> Result<(), String> {
     if let Some(err) = stderr {
         std::thread::spawn(move || stream_lines(app_stderr, err));
     }
-
-    // Poll for readiness in the background.
-    let app_poll = app.clone();
-    std::thread::spawn(move || poll_ready(app_poll));
 
     Ok(())
 }
@@ -513,78 +628,332 @@ fn detect_plugin_conflict(line: &str) {
     }
 }
 
-/// Poll the DSH web URL until it returns 200, then signal readiness.
+/// 解析 `dsh plugin --profile web list` 输出,判断是否存在非系统插件。
 ///
-/// If the DSH child process exits before the web server comes up, the launch is
-/// treated as failed: the loop stops (instead of waiting forever) and, if a
-/// plugin conflict was detected in the logs, the plugin list window is opened so
-/// the user can uninstall the offending plugin.
-fn poll_ready(app: AppHandle) {
+/// 系统插件都发布在 `@deepseek-ai/` scope 下(dsh-*、cordis-*、cosmokit …)。
+/// debug/next 通道加载系统插件时也会命中 `detect_plugin_conflict` 的 marker
+/// (ESM 导出告警等),但卸载系统插件无用且危险;只有当列表里存在非
+/// `@deepseek-ai/` 的第三方插件时,弹"已安装插件"页让用户卸载才有意义。
+fn has_third_party_plugin(list_output: &str) -> bool {
+    for line in list_output.lines() {
+        let t = line.trim();
+        let rest = t
+            .strip_prefix("├── ")
+            .or_else(|| t.strip_prefix("└── "))
+            .unwrap_or("")
+            .trim();
+        if rest.is_empty() {
+            continue;
+        }
+        // 形如 name@version,版本以数字开头;取最后一个 @(数字) 之前为 name。
+        let name = match rest.rfind('@') {
+            Some(i) if i + 1 < rest.len() && rest.as_bytes()[i + 1].is_ascii_digit() => &rest[..i],
+            _ => continue,
+        };
+        if !name.starts_with("@deepseek-ai/") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Outcome of one readiness probe against the DSH web server.
+#[derive(PartialEq)]
+enum Probe {
+    /// The API transport route answered — DSH is fully ready.
+    Ready,
+    /// The server answered but the API layer is not up yet.
+    NotReady,
+    /// No answer at all (still booting / downloading dependencies).
+    NoAnswer,
+}
+
+/// Probe DSH readiness with a request that proves the API layer is mounted.
+///
+/// A plain `GET /` returning 200 only proves the SPA fallback exists: the
+/// webserver listens immediately while the `/api` prefix route (what the UI's
+/// first "读取数据目录" fetch needs) is registered later by the
+/// client-connection plugin, which answers `GET /api/events.mux` with
+/// `426 Upgrade Required`. Requiring that exact status also rules out
+/// mistaking a foreign local web server that grabbed our port for DSH — the
+/// old `GET /` 2xx check did exactly that.
+fn probe(client: &Option<reqwest::blocking::Client>, url: &str) -> Probe {
+    let Some(client) = client else {
+        return Probe::NoAnswer;
+    };
+    match client.get(format!("{url}/api/events.mux")).send() {
+        Ok(resp) if resp.status().as_u16() == 426 => Probe::Ready,
+        Ok(_) => Probe::NotReady,
+        Err(_) => Probe::NoAnswer,
+    }
+}
+
+/// Whether the DSH child process has exited.
+fn child_exited() -> bool {
+    CHILD
+        .lock()
+        .unwrap()
+        .as_mut()
+        .map(|c| matches!(c.try_wait(), Ok(Some(_))))
+        .unwrap_or(false)
+}
+
+/// (Re)create the loading window outside the normal startup flow — used when
+/// DSH dies or fails after the original loading window is already gone.
+///
+/// The window is created with `?autostart=0` so its JS does NOT invoke
+/// `start_dsh` again (the supervisor already owns the restart); it shows the
+/// log stream, offers the manual retry button, and destroys itself on
+/// `dsh-ready` exactly like the startup window.
+fn show_loading_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("loading") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let url = tauri::WebviewUrl::App("index.html?autostart=0".into());
+        let _ = tauri::WebviewWindowBuilder::new(&app2, "loading", url)
+            .title("DeepSeek Harness Desktop")
+            .inner_size(560.0, 420.0)
+            .resizable(false)
+            .maximizable(false)
+            .center()
+            .build();
+    });
+}
+
+/// Supervise one launch session:
+///
+///   * phase 1 — wait for *strong* readiness (the `/api` route answering 426)
+///     or child exit. Boot failures are re-spawned automatically with backoff:
+///     a first boot downloads the whole dependency tree, where a single
+///     transient network error used to kill the launch and require a manual
+///     retry. Plugin conflicts / missing cache content are NOT retried (a
+///     re-spawn cannot fix those) and surface their existing remediation UI.
+///   * phase 2 — watchdog over the running server. If the child dies (e.g.
+///     the fail-loud loader exits on a first-boot data-layer error) it is
+///     restarted automatically within a bounded budget, the loading window is
+///     re-shown so the user sees progress, and `emit_ready` re-navigates the
+///     main window once the server is back — instead of leaving the user on a
+///     dead page reporting "Failed to fetch". A live-but-unresponsive server
+///     is restarted after a grace period.
+///
+/// The thread exits silently as soon as `GENERATION` moves past `gen` (a
+/// newer start/restart request took over the session).
+fn supervise(app: AppHandle, gen: u64) {
+    trace_launch(&app, &format!("supervise: entry (gen {gen})"));
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
         .ok();
 
-    let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
-    let url = dsh_url(port);
+    let mut boot_retries: u32 = 0;
 
-    let mut attempts = 0u32;
-    loop {
-        // Check for child exit *before* sleeping so a crash is detected as soon
-        // as possible (and we stop emitting "[waiting]" spam that would bury the
-        // real error message).
-        let exited = CHILD
-            .lock()
-            .unwrap()
-            .as_mut()
-            .map(|c| matches!(c.try_wait(), Ok(Some(_))))
-            .unwrap_or(false);
-        if exited && !READY.load(Ordering::SeqCst) {
-            emit_log(&app, "[error] DSH 进程已退出,启动失败。");
-            // Let the loading window enable the "重试启动" button (the failure
-            // is async; start_dsh returned Ok, so the frontend can't detect it).
-            let _ = app.emit("dsh-launch-failed", ());
-            if PLUGIN_MISSING.load(Ordering::SeqCst) {
-                emit_log(
-                    &app,
-                    "[hint] 检测到插件包缺失(缓存不完整)。请点击菜单「关于 → 清除 DSH 缓存」后重试,或重启应用重新安装。",
-                );
-            } else if PLUGIN_CONFLICT.load(Ordering::SeqCst) {
-                emit_log(
-                    &app,
-                    "[hint] 检测到插件冲突。已为你打开「已安装插件」页面,请卸载有问题的插件后点击「重试启动」。",
-                );
-                // Reuse the menu helper to surface the plugin list window.
-                crate::menu::open_plugin_list(&app);
-            } else {
-                emit_log(&app, "[hint] 可点击下方「重试启动」再次尝试。");
+    'session: loop {
+        // ---- phase 1: wait for the API layer to be ready (or the child to die) ----
+        let mut attempts: u32 = 0;
+        let mut root_ok_streak: u32 = 0;
+        let boot_started = std::time::Instant::now();
+        loop {
+            if GENERATION.load(Ordering::SeqCst) != gen {
+                return;
             }
-            return;
-        }
 
-        attempts += 1;
-        std::thread::sleep(std::time::Duration::from_millis(800));
+            if child_exited() {
+                // The child died before becoming ready.
+                if PLUGIN_MISSING.load(Ordering::SeqCst) {
+                    emit_log(&app, "[error] DSH 进程已退出,启动失败。");
+                    emit_log(
+                        &app,
+                        "[hint] 检测到插件包缺失(缓存不完整)。请点击菜单「关于 → 清除 DSH 缓存」后重试,或重启应用重新安装。",
+                    );
+                    let _ = app.emit("dsh-launch-failed", ());
+                    show_loading_window(&app);
+                    return;
+                }
+                if PLUGIN_CONFLICT.load(Ordering::SeqCst) {
+                    emit_log(&app, "[error] DSH 进程已退出,启动失败。");
+                    // 先确认是否真有第三方插件可卸载。若 list 全是系统插件
+                    // (@deepseek-ai/*),说明是 DSH 包自身(常见于 debug/next
+                    // 通道)加载异常,卸载系统插件无用且危险——改走清缓存/
+                    // 换通道引导,而不是打开"已安装插件"页让用户误卸载。
+                    let has_third_party = match run_dsh_command(
+                        &app,
+                        &["plugin", "--profile", "web", "list"],
+                    ) {
+                        Ok(out) => has_third_party_plugin(&out),
+                        Err(_) => false,
+                    };
+                    if has_third_party {
+                        emit_log(
+                            &app,
+                            "[hint] 检测到插件冲突。已为你打开「已安装插件」页面,请卸载有问题的第三方插件后点击「重试启动」。",
+                        );
+                        let _ = app.emit("dsh-launch-failed", ());
+                        crate::menu::open_plugin_list(&app);
+                        show_loading_window(&app);
+                    } else {
+                        emit_log(
+                            &app,
+                            "[hint] 日志中出现插件加载告警,但未检测到第三方插件。这通常是 DSH 包(当前版本通道)自身加载异常或缓存损坏,而非插件冲突。请点击菜单「关于 → 清除 DSH 缓存」后重试,或在「设置」中切换版本通道(如切回 latest)。",
+                        );
+                        let _ = app.emit("dsh-launch-failed", ());
+                        show_loading_window(&app);
+                    }
+                    return;
+                }
+                if boot_retries < MAX_BOOT_RETRIES {
+                    boot_retries += 1;
+                    let delay = 5 * boot_retries as u64;
+                    emit_log(
+                        &app,
+                        &format!(
+                            "[warn] DSH 启动过程中退出,{delay} 秒后自动重试(第 {boot_retries}/{MAX_BOOT_RETRIES} 次)…"
+                        ),
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(delay));
+                    if GENERATION.load(Ordering::SeqCst) != gen {
+                        return;
+                    }
+                    match spawn_dsh(&app) {
+                        Ok(()) => continue 'session,
+                        Err(e) => {
+                            emit_log(&app, &format!("[error] failed to spawn DSH: {e}"));
+                            let _ = app.emit("dsh-launch-failed", ());
+                            show_loading_window(&app);
+                            return;
+                        }
+                    }
+                }
+                emit_log(&app, "[error] DSH 进程已退出,自动重试均失败。可点击下方「重试启动」再次尝试。");
+                let _ = app.emit("dsh-launch-failed", ());
+                show_loading_window(&app);
+                return;
+            }
 
-        if let Some(client) = &client {
-            match client.get(&url).send() {
-                Ok(resp) if resp.status().is_success() => {
+            attempts += 1;
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            if GENERATION.load(Ordering::SeqCst) != gen {
+                return;
+            }
+
+            let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
+            let url = dsh_url(port);
+
+            match probe(&client, &url) {
+                Probe::Ready => {
                     READY.store(true, Ordering::SeqCst);
                     emit_log(&app, &format!("[ready] DSH web server is up at {url}"));
                     emit_ready(&app);
-                    return;
+                    break; // → phase 2
                 }
-                _ => {
-                    // "waiting" is only a faint heartbeat so the user knows the
-                    // app is still working (deps may take a while to download).
-                    // Emit it rarely and never spam it, so a real error isn't
-                    // pushed off-screen.
-                    if attempts == 5 {
-                        emit_log(&app, &format!("[waiting] {url} not ready yet,正在下载依赖,请稍候…"));
-                    } else if attempts % 50 == 0 {
-                        emit_log(&app, &format!("[waiting] {url} 仍在等待,请耐心等待…"));
+                Probe::NotReady => {
+                    root_ok_streak = 0;
+                }
+                Probe::NoAnswer => {
+                    // Legacy fallback for DSH builds without the /api probe:
+                    // accept a long, stable 200 on the root page while the
+                    // child stays alive, so older versions still boot.
+                    let root_ok = client
+                        .as_ref()
+                        .map(|c| {
+                            c.get(&url)
+                                .send()
+                                .map(|r| r.status().is_success())
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+                    if root_ok {
+                        root_ok_streak += 1;
+                        if root_ok_streak >= LEGACY_READY_ITERATIONS {
+                            emit_log(
+                                &app,
+                                "[warn] 未能探测到 /api 就绪信号,按旧版兼容方式判定就绪。",
+                            );
+                            READY.store(true, Ordering::SeqCst);
+                            emit_ready(&app);
+                            break;
+                        }
+                    } else {
+                        root_ok_streak = 0;
                     }
                 }
             }
+
+            // Faint heartbeat so the user knows the app is still working
+            // (dependency downloads may take a while); emitted rarely so a
+            // real error is never pushed off-screen.
+            if attempts == 5 {
+                emit_log(
+                    &app,
+                    &format!("[waiting] {url} not ready yet,正在下载依赖,请稍候…"),
+                );
+            } else if attempts % 50 == 0 {
+                emit_log(&app, &format!("[waiting] {url} 仍在等待,请耐心等待…"));
+            }
+
+            if boot_started.elapsed() > BOOT_TIMEOUT {
+                emit_log(
+                    &app,
+                    "[error] 启动超时(20 分钟),已停止等待。可点击下方「重试启动」再次尝试。",
+                );
+                let _ = app.emit("dsh-launch-failed", ());
+                show_loading_window(&app);
+                return;
+            }
+        }
+
+        // ---- phase 2: watchdog over the running server ----
+        let mut healthy_secs: u32 = 0;
+        let mut unhealthy_streak: u32 = 0;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            if GENERATION.load(Ordering::SeqCst) != gen {
+                return;
+            }
+
+            let dead = child_exited();
+            let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
+            let unhealthy = dead || probe(&client, &dsh_url(port)) != Probe::Ready;
+
+            if !unhealthy {
+                healthy_secs += 5;
+                unhealthy_streak = 0;
+                // A server that stays healthy for 5 minutes re-arms the
+                // auto-restart budget.
+                if healthy_secs >= 300 {
+                    AUTO_RESTARTS.store(0, Ordering::SeqCst);
+                    healthy_secs = 0;
+                }
+                continue;
+            }
+
+            if !dead {
+                unhealthy_streak += 1;
+                if unhealthy_streak < WATCHDOG_UNHEALTHY_LIMIT {
+                    if unhealthy_streak == 1 {
+                        emit_log(&app, "[warn] DSH 服务暂时无响应,正在观察…");
+                    }
+                    continue;
+                }
+                emit_log(&app, "[warn] DSH 服务持续无响应,视为异常。");
+            } else {
+                emit_log(&app, "[error] DSH 进程意外退出。");
+            }
+
+            // Do NOT auto-restart once the main window is up: restarting would
+            // navigate the main window away from DSH's own error page, hiding the
+            // very failure the user needs to see. Keep the main window as-is and
+            // stop supervising; the user can restart the app to retry.
+            READY.store(false, Ordering::SeqCst);
+            emit_log(
+                &app,
+                "[error] 已停止自动重启以保留 DSH 错误页面。请根据主窗口中的错误信息排查,或重启应用重新尝试。",
+            );
+            let _ = app.emit("dsh-launch-failed", ());
+            return;
         }
     }
 }
@@ -593,8 +962,10 @@ fn poll_ready(app: AppHandle) {
 ///
 /// This is intentionally non-blocking: it must be callable from window-close
 /// and exit handlers without freezing the UI. The process tree is terminated
-/// in the background via `taskkill /T /F`.
+/// in the background via `taskkill /T /F`. Bumping the generation also stops
+/// any supervisor thread still watching the old child.
 pub fn kill_dsh() {
+    GENERATION.fetch_add(1, Ordering::SeqCst);
     if let Some(mut child) = CHILD.lock().unwrap().take() {
         #[cfg(target_os = "windows")]
         {
@@ -620,17 +991,105 @@ pub fn kill_dsh() {
     }
     *CURRENT_PORT.lock().unwrap() = None;
     // Once DSH is killed it is no longer ready; this lets a subsequent
-    // launch_dsh() actually restart it (e.g. after clearing the cache).
+    // start_dsh() actually restart it (e.g. after clearing the cache).
+    READY.store(false, Ordering::SeqCst);
+}
+
+/// Kill the DSH child process tree and block until it has fully exited (or
+/// `timeout` elapses), so file locks on the store/profile directories are
+/// released before a new child is spawned. Also waits out a short settle
+/// period for OS handle release.
+///
+/// Unlike `kill_dsh`, this does NOT bump the launch generation — callers
+/// (start_dsh / clear_dsh_cache) manage the generation themselves so their
+/// brand-new supervisor survives.
+fn kill_and_wait(timeout: std::time::Duration) {
+    let Some(mut child) = CHILD.lock().unwrap().take() else {
+        return;
+    };
+    let pid = child.id();
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Kill the whole process tree (DSH spawns cmd.exe / nested node).
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW: no console flash
+            .spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = child.kill();
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    // Last-resort direct kill, then move on.
+                    let _ = child.kill();
+                    let _ = child.try_wait();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => break,
+        }
+    }
+    // Give the OS a beat to release remaining file handles.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    *CURRENT_PORT.lock().unwrap() = None;
     READY.store(false, Ordering::SeqCst);
 }
 
 /// Tauri command: frontend can request a (re)start of the DSH launch flow.
+///
+/// The kill → wait-for-exit → spawn → supervise sequence runs on a background
+/// thread (a sync command must not block the IPC caller for seconds), guarded
+/// by `LAUNCH_LOCK` so concurrent invocations cannot interleave their
+/// child-process handoffs. Failures are reported asynchronously via `dsh-log`
+/// / `dsh-launch-failed`, matching how the loading window already handles
+/// spawn errors.
 #[tauri::command]
 pub fn start_dsh(app: AppHandle) -> Result<(), String> {
+    // A new session invalidates any supervisor still running for the old one.
+    let gen = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    trace_launch(&app, &format!("=== start_dsh invoked (gen {gen})"));
     READY.store(false, Ordering::SeqCst);
     PLUGIN_CONFLICT.store(false, Ordering::SeqCst);
-    kill_dsh();
-    launch_dsh(&app)
+    PLUGIN_MISSING.store(false, Ordering::SeqCst);
+    AUTO_RESTARTS.store(0, Ordering::SeqCst);
+
+    std::thread::spawn(move || {
+        let _guard = LAUNCH_LOCK.lock().unwrap();
+        trace_launch(&app, "launch thread: acquired lock");
+        // A newer session was requested while we waited for the lock.
+        if GENERATION.load(Ordering::SeqCst) != gen {
+            trace_launch(&app, "launch thread: superseded before kill_and_wait");
+            return;
+        }
+        // Kill the old child and WAIT for it to exit: spawning immediately
+        // after taskkill raced Windows file locks on the store/profile dirs
+        // and made retries fail randomly.
+        kill_and_wait(std::time::Duration::from_secs(5));
+        if GENERATION.load(Ordering::SeqCst) != gen {
+            trace_launch(&app, "launch thread: superseded after kill_and_wait");
+            return;
+        }
+        if let Err(e) = spawn_dsh(&app) {
+            trace_launch(&app, &format!("launch thread: spawn_dsh failed: {e}"));
+            emit_log(&app, &format!("[error] failed to spawn DSH: {e}"));
+            let _ = app.emit("dsh-launch-failed", ());
+            return;
+        }
+        trace_launch(&app, "launch thread: spawn ok, starting supervisor");
+        let app2 = app.clone();
+        std::thread::spawn(move || supervise(app2, gen));
+    });
+    Ok(())
 }
 
 /// Tauri command: kill DSH and quit the whole app. Used by the loading window's
@@ -847,11 +1306,12 @@ pub fn clear_dsh_cache(app: AppHandle, mode: String) -> Result<String, String> {
     };
     trace(&format!("=== clear start mode={mode}"));
 
-    // Stop DSH first so files aren't locked.
-    kill_dsh();
-    // Give the killed process tree a moment to release file handles before we
-    // delete the store (otherwise remove_dir_all fails with a lock on Windows).
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    // Stop DSH first so files aren't locked. Bumping the generation stops any
+    // running supervisor thread; then block until the process tree has really
+    // exited instead of a fixed 1s sleep that raced Windows file-handle
+    // release (and made the store deletion fail with a lock).
+    GENERATION.fetch_add(1, Ordering::SeqCst);
+    kill_and_wait(std::time::Duration::from_secs(5));
     emit_clear_progress(&app, 10, "正在停止 DSH 进程…", false);
     emit_log(&app, "[info] 正在清除 DSH 缓存,请稍候…");
     trace("killed dsh + waited");

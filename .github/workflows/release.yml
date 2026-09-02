@@ -65,7 +65,7 @@ jobs:
       - name: Fetch bundled Node.js 22 LTS
         shell: bash
         run: |
-          NODE_VERSION="22.13.0"
+          NODE_VERSION="22.23.2"
           mkdir -p src-tauri/resources/node
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o node.zip

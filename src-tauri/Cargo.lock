@@ -764,6 +764,7 @@ dependencies = [
 name = "dsh-desktop"
 version = "0.2.2"
 dependencies = [
+ "chrono",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

@@ -23,6 +23,11 @@ pub fn entries() -> Vec<ChangelogEntry> {
             version: "0.2.2".to_string(),
             title: "0.2.2".to_string(),
             changes: vec![
+                "升级内置 Node 至 v22.23.2,修复 DSH 因 node:zlib 不导出 createZstdDecompress 而启动失败的问题。".to_string(),
+                "修复 Windows 长路径前缀(\\\\?\\)导致 Node v22.23.2 启动报 EISDIR 的问题。".to_string(),
+                "主窗口启动后 DSH 出错不再回退到 loading 页、不再自动重启,保留主窗口显示 DSH 错误页便于排查。".to_string(),
+                "新增运行日志落盘:每次启动的完整日志写入应用数据目录 logs/YYYY-MM-DD.log,按日期命名方便排查。".to_string(),
+                "修复插件冲突误判:系统插件加载告警不再误弹「已安装插件」卸载页,改为提示 DSH 包自身加载异常并引导清缓存/换通道。".to_string(),
                 "「运行」菜单新增「清除 DSH 缓存」:可选择清除依赖还是完整清除(保留用户数据),自动结束并重启 DSH。".to_string(),
                 "清除缓存时显示带进度条的加载窗口,后台线程执行删除不再卡住界面;完整清除也清理 profiles/node_modules 等真实目录。".to_string(),
                 "修复清除缓存进度条卡在 30% 的问题(改为重命名+异步删除,1.2GB 数据不再阻塞进度)。".to_string(),

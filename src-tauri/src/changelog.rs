@@ -20,6 +20,19 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.2".to_string(),
+            title: "0.2.2".to_string(),
+            changes: vec![
+                "「运行」菜单新增「清除 DSH 缓存」:可选择清除依赖还是完整清除(保留用户数据),自动结束并重启 DSH。".to_string(),
+                "清除缓存时显示带进度条的加载窗口,后台线程执行删除不再卡住界面;完整清除也清理 profiles/node_modules 等真实目录。".to_string(),
+                "修复清除缓存进度条卡在 30% 的问题(改为重命名+异步删除,1.2GB 数据不再阻塞进度)。".to_string(),
+                "插件列表新增「更新」按钮,可一键把插件升级到最新版本。".to_string(),
+                "修复插件冲突误报:缺少包不再被误判为插件冲突,clear-cache 改为同步且可靠。".to_string(),
+                "通过命名互斥量强制单实例运行,避免出现重复托盘图标。".to_string(),
+                "工具窗口打开时通过 URL ?page= 参数显示正确页面(启动失败后进入插件列表而非安装页)。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.1".to_string(),
             title: "0.2.1".to_string(),
             changes: vec![

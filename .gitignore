@@ -25,3 +25,6 @@ Thumbs.db
 # Vision toolkit / local temp
 .dsh-vision-toolkit/
 build/*.png
+
+# Local project instructions (not versioned)
+AGENTS.md

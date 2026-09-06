@@ -28,3 +28,8 @@ build/*.png
 
 # Local project instructions (not versioned)
 AGENTS.md
+
+# Local IDE / agent tooling state
+.arts/
+.codeartsdoer/
+.workbuddy/

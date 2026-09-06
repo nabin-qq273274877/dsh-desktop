@@ -15,6 +15,9 @@
       <h2>安装插件</h2>
       <p class="hint">只需输入插件名称,点击安装即可(自动执行 <code>dsh plugin --profile web add &lt;名称&gt;</code>)。</p>
       <div class="row">
+        <button id="btn-goto-list" class="btn" type="button">已安装插件</button>
+      </div>
+      <div class="row">
         <input id="plugin-name" type="text" placeholder="输入插件名称,如 dsh-subagent-codex" />
         <button id="btn-install" class="btn" type="button">安装</button>
       </div>
@@ -26,6 +29,7 @@
       <h2>已安装插件</h2>
       <div class="row">
         <button id="btn-refresh" class="btn" type="button">刷新</button>
+        <button id="btn-goto-install" class="btn" type="button">安装插件</button>
       </div>
       <div id="plugin-list" class="plugin-list"></div>
       <pre id="plugin-list-raw" class="output" hidden></pre>

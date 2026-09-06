@@ -20,6 +20,15 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.3".to_string(),
+            title: "0.2.3".to_string(),
+            changes: vec![
+                "修复新版 DSH 启动链接带 token 时主窗口无法打开的问题:自动解析 dsh web 启动链接,就绪探测与主窗口跳转改用带 token 的链接,旧版 DSH 不受影响。".to_string(),
+                "「已安装插件」页新增「安装插件」按钮,可一键跳转到安装插件页。".to_string(),
+                "「安装插件」页新增「已安装插件」按钮,可一键跳回插件列表页。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.2".to_string(),
             title: "0.2.2".to_string(),
             changes: vec![

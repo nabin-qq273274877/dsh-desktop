@@ -26,6 +26,15 @@ static READY: AtomicBool = AtomicBool::new(false);
 /// The dynamically chosen port for the current DSH run.
 static CURRENT_PORT: Mutex<Option<u16>> = Mutex::new(None);
 
+/// The tokenized DSH web URL parsed from the `dsh web:` startup line, e.g.
+/// `http://127.0.0.1:3080/?token=…`. Newer DSH builds mint a fresh process
+/// token per boot that authenticates every Host API method and WebSocket
+/// stream, so readiness probes and the main-window navigation must use the
+/// exact printed URL. `None` until the line arrives (or forever for older
+/// DSH builds that never print it) — the callers then fall back to the
+/// token-less `http://{DSH_HOST}:{port}`.
+static WEB_URL: Mutex<Option<String>> = Mutex::new(None);
+
 /// Rolling buffer of log lines so a late-arriving frontend can replay history.
 static LOG_HISTORY: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -88,7 +97,18 @@ fn find_free_port() -> Result<u16, String> {
 }
 
 /// The DSH web URL for the currently chosen port.
+///
+/// Newer DSH builds print a tokenized startup URL (`dsh web: …/?token=…`)
+/// whose token authenticates every Host API method and WebSocket stream.
+/// Once that line has been parsed, the exact printed URL must be used for
+/// readiness probes and the main-window navigation — the token-less
+/// `http://{DSH_HOST}:{port}` would be rejected by the server. Before the
+/// line arrives (or for older DSH builds that never print it) we fall back
+/// to the plain loopback URL.
 fn dsh_url(port: u16) -> String {
+    if let Some(url) = WEB_URL.lock().unwrap().clone() {
+        return url;
+    }
     format!("http://{DSH_HOST}:{port}")
 }
 
@@ -447,6 +467,9 @@ fn emit_ready(app: &AppHandle) {
 /// `probe`).
 fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
     trace_launch(app, "spawn_dsh: entry");
+    // A fresh process token is minted per boot; a stale token from a previous
+    // run must not be reused for probes/navigation of the new server.
+    *WEB_URL.lock().unwrap() = None;
     // Fresh conflict detection for this process run: stale flags from a
     // previous (failed) run must not hijack this run's failure handling.
     PLUGIN_CONFLICT.store(false, Ordering::SeqCst);
@@ -582,6 +605,47 @@ fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Strip ANSI escape sequences (e.g. color codes) so log lines can be matched
+/// textually. DSH prints plain lines, but pnpm/Node may emit colored output
+/// depending on the reporter.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Skip everything up to the terminating alphabetic byte.
+            for c2 in chars.by_ref() {
+                if c2.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Extract the DSH web startup URL from the `dsh web: <url>` line that newer
+/// DSH builds print once the Loader tree settles. The root URL carries a
+/// fresh process token (e.g. `http://127.0.0.1:3080/?token=…`) that
+/// authenticates every Host API method and WebSocket stream, so the launcher
+/// must reuse the exact printed URL for probes and navigation.
+///
+/// Returns `None` for any other line — including the "opening the default
+/// browser; pass --no-open to disable" notice, whose first token is not an
+/// http(s) URL — and for lines whose URL fails to parse.
+fn extract_web_url(line: &str) -> Option<String> {
+    let clean = strip_ansi(line);
+    let rest = clean.trim_start().strip_prefix("dsh web:")?.trim_start();
+    let url = rest.split_whitespace().next()?;
+    if url.starts_with("http://") || url.starts_with("https://") {
+        url::Url::parse(url).ok().map(|u| u.to_string())
+    } else {
+        None
+    }
+}
+
 /// Stream lines from a child process pipe to the loading window.
 fn stream_lines(app: AppHandle, stream: impl std::io::Read + Send + 'static) {
     let reader = BufReader::new(stream);
@@ -589,6 +653,16 @@ fn stream_lines(app: AppHandle, stream: impl std::io::Read + Send + 'static) {
         match line {
             Ok(l) => {
                 detect_plugin_conflict(&l);
+                // Newer DSH prints `dsh web: http://127.0.0.1:<port>/?token=…`
+                // once its Loader tree settles. The token authenticates the
+                // Host API/WebSocket surface, so remember the exact URL for
+                // readiness probes and the main-window navigation; before the
+                // line arrives (or for older DSH builds) callers fall back to
+                // the token-less `http://127.0.0.1:<port>`.
+                if let Some(url) = extract_web_url(&l) {
+                    trace_launch(&app, &format!("dsh web URL line: {url}"));
+                    *WEB_URL.lock().unwrap() = Some(url);
+                }
                 emit_log(&app, &l);
             }
             Err(_) => break,
@@ -668,24 +742,47 @@ enum Probe {
     NoAnswer,
 }
 
-/// Probe DSH readiness with a request that proves the API layer is mounted.
+/// Probe DSH readiness.
 ///
-/// A plain `GET /` returning 200 only proves the SPA fallback exists: the
-/// webserver listens immediately while the `/api` prefix route (what the UI's
-/// first "读取数据目录" fetch needs) is registered later by the
-/// client-connection plugin, which answers `GET /api/events.mux` with
-/// `426 Upgrade Required`. Requiring that exact status also rules out
-/// mistaking a foreign local web server that grabbed our port for DSH — the
-/// old `GET /` 2xx check did exactly that.
-fn probe(client: &Option<reqwest::blocking::Client>, url: &str) -> Probe {
+/// Newer DSH builds (which print a tokenized `dsh web:` startup URL) are
+/// considered ready once that URL answers: a `GET <url>` returns `303 See
+/// Other` with a `set-cookie` session cookie — the token exchange that
+/// proves both the web server and the connection/authentication layer are
+/// up (the URL line only prints after the Loader tree settles). Any 2xx/3xx
+/// status is accepted. The legacy `/api/events.mux` → 426 probe is kept for
+/// older builds that never print a URL line.
+fn probe(client: &Option<reqwest::blocking::Client>, url: &str, token_url: bool) -> Probe {
     let Some(client) = client else {
         return Probe::NoAnswer;
     };
-    match client.get(format!("{url}/api/events.mux")).send() {
-        Ok(resp) if resp.status().as_u16() == 426 => Probe::Ready,
-        Ok(_) => Probe::NotReady,
-        Err(_) => Probe::NoAnswer,
+    if token_url {
+        // The token exchange answers 303 See Other. Do NOT follow the
+        // redirect: following it re-requests the clean root URL without the
+        // session cookie (this client keeps no cookie jar), which the server
+        // rejects with 401 — that would mask the ready signal. A 2xx/3xx
+        // answer at the token URL itself is the readiness proof.
+        match client.get(url).send() {
+            Ok(resp) if resp.status().is_success() || resp.status().is_redirection() => {
+                Probe::Ready
+            }
+            Ok(_) => Probe::NotReady,
+            Err(_) => Probe::NoAnswer,
+        }
+    } else {
+        match client.get(format!("{url}/api/events.mux")).send() {
+            Ok(resp) if resp.status().as_u16() == 426 => Probe::Ready,
+            Ok(_) => Probe::NotReady,
+            Err(_) => Probe::NoAnswer,
+        }
     }
+}
+
+/// Whether the tokenized `dsh web:` startup line has been parsed for the
+/// current run (see `extract_web_url` / `WEB_URL`). When it has, readiness
+/// probes switch from the legacy `/api` endpoint check to the token-exchange
+/// check against the printed URL.
+fn has_token_url() -> bool {
+    WEB_URL.lock().unwrap().is_some()
 }
 
 /// Whether the DSH child process has exited.
@@ -746,6 +843,11 @@ fn supervise(app: AppHandle, gen: u64) {
     trace_launch(&app, &format!("supervise: entry (gen {gen})"));
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
+        // Never follow redirects: the token-exchange probe must see the raw
+        // 303 (following it would re-request the clean root URL without the
+        // session cookie and get a 401), and none of the other probed
+        // endpoints redirect.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok();
 
@@ -841,8 +943,9 @@ fn supervise(app: AppHandle, gen: u64) {
 
             let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
             let url = dsh_url(port);
+            let token_url = has_token_url();
 
-            match probe(&client, &url) {
+            match probe(&client, &url, token_url) {
                 Probe::Ready => {
                     READY.store(true, Ordering::SeqCst);
                     emit_log(&app, &format!("[ready] DSH web server is up at {url}"));
@@ -916,7 +1019,8 @@ fn supervise(app: AppHandle, gen: u64) {
 
             let dead = child_exited();
             let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
-            let unhealthy = dead || probe(&client, &dsh_url(port)) != Probe::Ready;
+            let token_url = has_token_url();
+            let unhealthy = dead || probe(&client, &dsh_url(port), token_url) != Probe::Ready;
 
             if !unhealthy {
                 healthy_secs += 5;
@@ -966,6 +1070,7 @@ fn supervise(app: AppHandle, gen: u64) {
 /// any supervisor thread still watching the old child.
 pub fn kill_dsh() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
+    *WEB_URL.lock().unwrap() = None;
     if let Some(mut child) = CHILD.lock().unwrap().take() {
         #[cfg(target_os = "windows")]
         {

@@ -215,6 +215,16 @@ document.getElementById("btn-install")?.addEventListener("click", async () => {
 
 document.getElementById("btn-refresh")?.addEventListener("click", refreshPlugins);
 
+// "已安装插件"页 → 跳转到"安装插件"页。
+document.getElementById("btn-goto-install")?.addEventListener("click", () => {
+  showPage("install-plugin");
+});
+
+// "安装插件"页 → 跳转到"已安装插件"页(showPage 会自动触发列表刷新)。
+document.getElementById("btn-goto-list")?.addEventListener("click", () => {
+  showPage("list-plugins");
+});
+
 // ---------- settings ----------
 function loadSettings() {
   const status = document.getElementById("settings-status");

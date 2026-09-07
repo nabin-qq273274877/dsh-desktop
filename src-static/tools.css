@@ -145,6 +145,25 @@ input[type="text"]:focus {
   color: var(--muted);
 }
 
+/* Spinner shown while the plugin's latest-version lookup is in flight. */
+.plugin-actions .upd-state.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+}
+.plugin-actions .upd-state .spin {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: upd-spin 0.8s linear infinite;
+}
+@keyframes upd-spin {
+  to { transform: rotate(360deg); }
+}
+
 .output {
   margin: 0;
   background: var(--panel);

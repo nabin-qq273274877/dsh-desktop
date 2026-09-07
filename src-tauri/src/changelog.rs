@@ -20,6 +20,15 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.4".to_string(),
+            title: "0.2.4".to_string(),
+            changes: vec![
+                "「已安装插件」页版本检测优化:检测中显示加载动画,只有确认有新版才显示「更新」按钮,已是最新/未发布/检测失败显示对应灰色状态,最新版不再误显示更新按钮。".to_string(),
+                "修复插件最新版本查询全部失败的问题(内置 HTTP 请求缺少 TLS 支持),各插件现在能正确检测是否有新版本。".to_string(),
+                "「查看」菜单新增「数据目录」入口,可一键打开应用数据目录。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.3".to_string(),
             title: "0.2.3".to_string(),
             changes: vec![

@@ -123,10 +123,16 @@ function buildPluginItem(p) {
   const actions = document.createElement("span");
   actions.className = "plugin-actions";
 
-  // Placeholder that the async update-state lookup fills in.
+  // Loading indicator: shown while the async latest-version lookup runs.
+  // Only after the lookup finishes is it replaced by an "更新" button or a
+  // neutral label — we never show "更新" before we know an update exists.
   const updState = document.createElement("span");
-  updState.className = "upd-state";
-  updState.textContent = "…";
+  updState.className = "upd-state loading";
+  updState.title = "正在检测最新版本…";
+  const spin = document.createElement("span");
+  spin.className = "spin";
+  updState.appendChild(spin);
+  updState.appendChild(document.createTextNode("检测中"));
   actions.appendChild(updState);
 
   const removeBtn = document.createElement("button");
@@ -186,23 +192,31 @@ function compareVersions(a, b) {
 }
 
 /// After a plugin row is rendered, query the registry for its latest version
-/// and set the update area: an "更新" button if a newer version exists, or a
-/// grey "已是最新" label otherwise. On any error, fall back to showing the
-/// "更新" button (safe default that lets the user still force an update).
+/// and set the update area:
+///   * a newer version exists  → an "更新" button (the only case that shows it);
+///   * already newest          → a grey "已是最新" label;
+///   * package not on registry → a grey "未发布" label (no update to install);
+///   * lookup failed           → a grey "检测失败" label (never claim an update
+///     exists based on a failed check).
 async function resolveUpdateState(p) {
   const item = findPluginItem(p.name);
   const updState = item ? item.querySelector(".upd-state") : null;
   if (!updState) return;
 
   let latest = null;
+  let lookupFailed = false;
   try {
     const res = await invoke("get_plugin_latest_version", { package: p.name });
     if (res) latest = res;
   } catch (e) {
     latest = null;
+    lookupFailed = true;
   }
 
   const actions = item.querySelector(".plugin-actions");
+  // The list may have been refreshed while the lookup was in flight.
+  if (!actions || !actions.contains(updState)) return;
+
   if (latest && compareVersions(latest, p.version) > 0) {
     // Newer version available → show the 更新 button.
     const updateBtn = document.createElement("button");
@@ -210,17 +224,19 @@ async function resolveUpdateState(p) {
     updateBtn.textContent = "更新";
     updateBtn.addEventListener("click", () => updatePlugin(p.name, updateBtn));
     actions.replaceChild(updateBtn, updState);
-  } else if (latest === null) {
-    // Couldn't determine the latest (registry error / unknown package): keep an
-    // "更新" button so the user can still try, since we can't prove it's latest.
-    const updateBtn = document.createElement("button");
-    updateBtn.className = "btn btn-update";
-    updateBtn.textContent = "更新";
-    updateBtn.addEventListener("click", () => updatePlugin(p.name, updateBtn));
-    actions.replaceChild(updateBtn, updState);
-  } else {
+  } else if (latest) {
     // Already at the newest published version.
     updState.textContent = "已是最新";
+    updState.className = "upd-state is-latest";
+  } else if (lookupFailed) {
+    // Couldn't reach/parse the registry: show a neutral label instead of an
+    // "更新" button — a failed check proves nothing.
+    updState.textContent = "检测失败";
+    updState.className = "upd-state is-latest";
+  } else {
+    // Package unknown to the registry (e.g. installed from a local path):
+    // there is no published latest to compare against.
+    updState.textContent = "未发布";
     updState.className = "upd-state is-latest";
   }
 }

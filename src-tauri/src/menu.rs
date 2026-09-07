@@ -16,6 +16,7 @@ const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
 const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
 const MENU_RUN_CLEAR_CACHE: &str = "run_clear_cache";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
+const MENU_VIEW_OPEN_DATA_DIR: &str = "view_open_data_dir";
 const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
 const MENU_SETTINGS: &str = "settings";
 const MENU_ABOUT_DSH_VERSION: &str = "about_dsh_version";
@@ -60,6 +61,11 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let view_submenu = SubmenuBuilder::new(app, "查看")
         .item(
             &MenuItemBuilder::with_id(MENU_VIEW_LIST_PLUGINS, "已安装插件")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_OPEN_DATA_DIR, "数据目录")
                 .build(app)?,
         )
         .separator()
@@ -148,6 +154,10 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         }
         MENU_VIEW_DEVTOOLS => {
             toggle_devtools(app);
+            return;
+        }
+        MENU_VIEW_OPEN_DATA_DIR => {
+            open_user_data_dir(app);
             return;
         }
         MENU_ABOUT_UPDATE_AVAILABLE => {
@@ -354,6 +364,36 @@ fn open_clear_loading(app: &AppHandle) {
         .decorations(true)
         .visible(true);
     let _ = builder.build();
+}
+
+/// Open the user data directory (the DSH home folder) in the OS file manager.
+///
+/// Called from the "查看 > 数据目录" menu item. Resolves the app's data
+/// directory up front and shows a message dialog if it cannot be opened.
+fn open_user_data_dir(app: &AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+    let dir = match crate::launcher::dsh_home_path(app) {
+        Ok(d) => d,
+        Err(e) => {
+            let _ = app
+                .dialog()
+                .message(format!("无法定位用户数据目录:\n{e}"))
+                .title("数据目录")
+                .kind(MessageDialogKind::Error)
+                .blocking_show();
+            return;
+        }
+    };
+
+    if let Err(e) = crate::launcher::open_in_file_manager(&dir) {
+        let _ = app
+            .dialog()
+            .message(format!("打开数据目录失败:\n{} ({e})", dir.display()))
+            .title("数据目录")
+            .kind(MessageDialogKind::Error)
+            .blocking_show();
+    }
 }
 
 /// Toggle the DevTools inspector on the main window (if present).

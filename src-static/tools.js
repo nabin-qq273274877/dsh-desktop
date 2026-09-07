@@ -88,7 +88,10 @@ async function refreshPlugins() {
       return;
     }
     for (const p of plugins) {
+      // Render each row immediately, then fill in the update state (最新版本
+      // 需要向 registry 查询) asynchronously below.
       listEl.appendChild(buildPluginItem(p));
+      resolveUpdateState(p);
     }
   } catch (e) {
     listEl.innerHTML = "";
@@ -120,23 +123,115 @@ function buildPluginItem(p) {
   const actions = document.createElement("span");
   actions.className = "plugin-actions";
 
-  const updateBtn = document.createElement("button");
-  updateBtn.className = "btn btn-update";
-  updateBtn.textContent = "更新";
-  updateBtn.addEventListener("click", () => updatePlugin(p.name, updateBtn));
+  // Placeholder that the async update-state lookup fills in.
+  const updState = document.createElement("span");
+  updState.className = "upd-state";
+  updState.textContent = "…";
+  actions.appendChild(updState);
 
   const removeBtn = document.createElement("button");
   removeBtn.className = "btn btn-danger";
   removeBtn.textContent = "卸载";
   removeBtn.addEventListener("click", () => removePlugin(p.name));
 
-  actions.appendChild(updateBtn);
   actions.appendChild(removeBtn);
 
   item.appendChild(name);
   item.appendChild(ver);
   item.appendChild(actions);
   return item;
+}
+
+/// Compare two semver-ish version strings. Returns negative if a<b, 0 if equal,
+/// positive if a>b. Handles dotted numeric parts plus a trailing pre-release
+/// suffix (e.g. `1.2.3-rc.1`) which sorts below the plain release of the same
+/// core, matching npm's ordering closely enough for update checks.
+function compareVersions(a, b) {
+  const parse = (v) => {
+    const [core, pre] = String(v).trim().split("-", 2);
+    const nums = core.split(".").map((n) => parseInt(n, 10) || 0);
+    return { nums, pre: pre || "" };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  const len = Math.max(pa.nums.length, pb.nums.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa.nums[i] || 0) - (pb.nums[i] || 0);
+    if (d !== 0) return d;
+  }
+  // Same core: a release without a pre-release suffix is newer.
+  if (pa.pre && !pb.pre) return -1;
+  if (!pa.pre && pb.pre) return 1;
+  if (!pa.pre && !pb.pre) return 0;
+  // Both have pre-release suffixes: lexicographic comparison on dot segments
+  // (numeric segments compare numerically). Good enough for update checks.
+  const segA = pa.pre.split(".");
+  const segB = pb.pre.split(".");
+  const n = Math.max(segA.length, segB.length);
+  for (let i = 0; i < n; i++) {
+    const sa = segA[i];
+    const sb = segB[i];
+    if (sa === undefined) return -1;
+    if (sb === undefined) return 1;
+    const na = parseInt(sa, 10);
+    const nb = parseInt(sb, 10);
+    const bothNum = /^\d+$/.test(sa) && /^\d+$/.test(sb);
+    if (bothNum) {
+      if (na !== nb) return na - nb;
+    } else if (sa !== sb) {
+      return sa < sb ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+/// After a plugin row is rendered, query the registry for its latest version
+/// and set the update area: an "更新" button if a newer version exists, or a
+/// grey "已是最新" label otherwise. On any error, fall back to showing the
+/// "更新" button (safe default that lets the user still force an update).
+async function resolveUpdateState(p) {
+  const item = findPluginItem(p.name);
+  const updState = item ? item.querySelector(".upd-state") : null;
+  if (!updState) return;
+
+  let latest = null;
+  try {
+    const res = await invoke("get_plugin_latest_version", { package: p.name });
+    if (res) latest = res;
+  } catch (e) {
+    latest = null;
+  }
+
+  const actions = item.querySelector(".plugin-actions");
+  if (latest && compareVersions(latest, p.version) > 0) {
+    // Newer version available → show the 更新 button.
+    const updateBtn = document.createElement("button");
+    updateBtn.className = "btn btn-update";
+    updateBtn.textContent = "更新";
+    updateBtn.addEventListener("click", () => updatePlugin(p.name, updateBtn));
+    actions.replaceChild(updateBtn, updState);
+  } else if (latest === null) {
+    // Couldn't determine the latest (registry error / unknown package): keep an
+    // "更新" button so the user can still try, since we can't prove it's latest.
+    const updateBtn = document.createElement("button");
+    updateBtn.className = "btn btn-update";
+    updateBtn.textContent = "更新";
+    updateBtn.addEventListener("click", () => updatePlugin(p.name, updateBtn));
+    actions.replaceChild(updateBtn, updState);
+  } else {
+    // Already at the newest published version.
+    updState.textContent = "已是最新";
+    updState.className = "upd-state is-latest";
+  }
+}
+
+function findPluginItem(name) {
+  const listEl = document.getElementById("plugin-list");
+  for (const child of listEl.children) {
+    const n = child.querySelector(".name");
+    if (n && n.textContent === name) return child;
+  }
+  return null;
 }
 
 async function updatePlugin(name, btn) {

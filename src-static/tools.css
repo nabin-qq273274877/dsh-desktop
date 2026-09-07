@@ -136,6 +136,15 @@ input[type="text"]:focus {
   font-size: 12px;
 }
 
+/* Grey "已是最新" label shown when no newer plugin version is available. */
+.plugin-actions .upd-state {
+  align-self: center;
+  font-size: 12px;
+}
+.plugin-actions .upd-state.is-latest {
+  color: var(--muted);
+}
+
 .output {
   margin: 0;
   background: var(--panel);

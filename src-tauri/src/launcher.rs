@@ -277,6 +277,43 @@ pub(crate) fn dsh_home_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir.join("dsh-desktop").join("dsh-home"))
 }
 
+/// Open a folder in the OS file manager (Explorer / Finder / xdg-open).
+///
+/// Fails if the directory can't be created or the opener can't be spawned. The
+/// directory path is passed as-is; on Windows `explorer` selects the folder.
+pub(crate) fn open_in_file_manager(dir: &std::path::Path) -> Result<(), String> {
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("创建数据目录失败 {}: {e}", dir.display()))?;
+    }
+    let path = strip_extended_length_path(&dir.to_path_buf());
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("explorer")
+            .arg(&path)
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW: no console flash
+            .spawn()
+            .map_err(|e| format!("启动资源管理器失败: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("failed to open folder: {e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("failed to open folder: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Idempotently create the whole `<app-data>/dsh-desktop` layout (`dsh-home`,
 /// `store`, `cache`) and return the `dsh-desktop` directory.
 ///
@@ -1358,6 +1395,55 @@ pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, St
         ],
     )
     .await
+}
+
+/// The npm registry mirror used for all package fetches (same one pnpm/npm are
+/// pointed at in `dsh_subcommand`).
+const NPM_REGISTRY: &str = "https://registry.npmmirror.com";
+
+/// Tauri command: return the latest published version (the `latest` dist-tag)
+/// of an installed plugin from the npm registry.
+///
+/// Returns `Some(version)` when the package exists on the registry, `None` if
+/// the package is unknown to the registry (e.g. a locally-resolved plugin).
+/// The frontend uses this to decide whether an "更新" button should appear.
+#[tauri::command]
+pub async fn get_plugin_latest_version(package: String) -> Result<Option<String>, String> {
+    // Run the blocking HTTP fetch off the async executor (same pattern as
+    // run_dsh_command_async) so it never stalls other IPC calls.
+    tauri::async_runtime::spawn_blocking(move || {
+        let pkg = package.trim().to_string();
+        if pkg.is_empty() {
+            return Err("package name is empty".to_string());
+        }
+        // Scoped package names contain a `/` (@scope/name); percent-encode it so
+        // the path segment stays unambiguous on the registry
+        // (/@scope%2Fname/latest).
+        let encoded = pkg.replace('/', "%2F");
+        let url = format!("{NPM_REGISTRY}/{encoded}/latest");
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("http client init failed: {e}"))?;
+
+        let resp = client
+            .get(&url)
+            .send()
+            .map_err(|e| format!("查询 {pkg} 最新版本失败: {e}"))?;
+        if !resp.status().is_success() {
+            // 404 → package unknown; treat as "no remote latest" not an error.
+            return Ok(None);
+        }
+        let json: serde_json::Value =
+            resp.json().map_err(|e| format!("解析 {pkg} 版本信息失败: {e}"))?;
+        Ok(json
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string()))
+    })
+    .await
+    .map_err(|e| format!("查询任务失败: {e}"))?
 }
 
 /// Payload for the `clear-progress` event.

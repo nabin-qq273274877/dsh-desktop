@@ -20,6 +20,14 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.5".to_string(),
+            title: "0.2.5".to_string(),
+            changes: vec![
+                "修复插件「更新」按钮更新后版本不变、反复提示有新版本的问题:更新命令改用检测到的显式版本号安装,绕过 pnpm 对发布不足 24 小时新版本的 supply-chain 保护,更新后正确显示「已是最新」。".to_string(),
+                "插件更新前查询不到 registry 版本信息时会明确提示原因,不再静默假装更新成功。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.4".to_string(),
             title: "0.2.4".to_string(),
             changes: vec![

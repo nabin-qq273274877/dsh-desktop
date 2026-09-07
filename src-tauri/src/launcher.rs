@@ -1373,17 +1373,26 @@ pub async fn remove_plugin(app: AppHandle, package: String) -> Result<String, St
 
 /// Tauri command: update a plugin to its latest version.
 ///
-/// DSH updates a plugin the same way it installs it — `add <pkg>@latest` — so
-/// the pinned package is refreshed to the latest published version.
+/// The pinned package is refreshed to the latest published version. Instead of
+/// `add <pkg>@latest` we resolve the latest version from the registry first and
+/// pass it as an explicit spec (`<pkg>@<version>`): pnpm's supply-chain policy
+/// (`minimumReleaseAge`, the "发布 24 小时内保护") silently drops versions
+/// published inside the age window when resolving a dist-tag, so
+/// `add <pkg>@latest` can exit 0 without changing anything — the plugin stays
+/// on the old version while the frontend keeps showing an update is available.
+/// An explicit version spec bypasses the tag resolution, and pnpm
+/// automatically adds the pinned version to `minimumReleaseAgeExclude`.
 #[tauri::command]
 pub async fn update_plugin(app: AppHandle, package: String) -> Result<String, String> {
     let pkg = package.trim().to_string();
     if pkg.is_empty() {
         return Err("package name is empty".to_string());
     }
-    // Scope packages (@scope/name) need `@scope/name@latest`, so append the tag
-    // after the full package name.
-    let target = format!("{pkg}@latest");
+    let latest = get_plugin_latest_version(pkg.clone()).await?
+        .ok_or_else(|| format!("在 npm registry 上未找到 {pkg} 的版本信息,无法更新"))?;
+    // Scope packages (@scope/name) need `@scope/name@<version>`, so append the
+    // version after the full package name.
+    let target = format!("{pkg}@{latest}");
     run_dsh_command_async(
         app,
         vec![

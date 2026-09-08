@@ -20,6 +20,13 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.2.6".to_string(),
+            title: "0.2.6".to_string(),
+            changes: vec![
+                "启动(loading)页新增「检查更新」按钮:主窗口因启动失败/旧版本问题起不来时,仍可从启动页打开「关于 — 检查更新」页面升级桌面应用,避免被困在无法启动的状态。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.5".to_string(),
             title: "0.2.5".to_string(),
             changes: vec![

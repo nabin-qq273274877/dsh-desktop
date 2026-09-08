@@ -92,6 +92,7 @@ fn main() {
             launcher::import_config,
             check_update,
             install_update,
+            menu::open_update_page,
             get_desktop_version,
             settings::get_settings,
             settings::update_settings,

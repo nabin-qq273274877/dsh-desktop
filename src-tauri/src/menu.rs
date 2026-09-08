@@ -196,6 +196,20 @@ pub fn open_about_with_update(app: &AppHandle) {
     trigger_update_in_about(app);
 }
 
+/// Tauri command: open the "关于 / 检查更新" tools page so the user can check
+/// for and install a new desktop version.
+///
+/// This is exposed so the *loading* window can reach the update page even when
+/// the main window failed to come up (e.g. an outdated build can't boot DSH):
+/// unlike the native menu/tray, the loading window stays available to the user
+/// in exactly those failure cases. Clicking the button opens the page and lets
+/// the user decide whether to run "检查更新" there — it does not auto-install.
+#[tauri::command]
+pub fn open_update_page(app: AppHandle) -> Result<(), String> {
+    open_tools_window(&app, "about");
+    Ok(())
+}
+
 /// Run an update check in the background once the main window is ready.
 ///
 /// This is deliberately async and non-blocking: it runs off the UI thread, so

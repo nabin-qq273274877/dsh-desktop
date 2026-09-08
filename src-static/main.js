@@ -136,6 +136,18 @@ if (!isMain) {
     }
   });
 
+  // "检查更新": open the "关于 / 检查更新" page so the user can update the
+  // desktop app even if the main window failed to come up (an outdated build
+  // that can't boot DSH). The page itself lets the user run the check and
+  // decide whether to install.
+  document.getElementById("btn-check-update")?.addEventListener("click", async () => {
+    try {
+      await invoke("open_update_page");
+    } catch (e) {
+      appendLog(`[error] 打开检查更新页面失败: ${e}`, "line-err");
+    }
+  });
+
   // "复制日志": copy whatever is currently shown in the log box to the clipboard.
   const copyBtn = document.getElementById("btn-copy-log");
   copyBtn?.addEventListener("click", async () => {

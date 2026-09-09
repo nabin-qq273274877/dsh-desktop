@@ -376,7 +376,8 @@ fn open_clear_loading(app: &AppHandle) {
         .minimizable(false)
         .center()
         .decorations(true)
-        .visible(true);
+        .visible(true)
+        .disable_drag_drop_handler();
     let _ = builder.build();
 }
 
@@ -450,7 +451,8 @@ fn open_tools_window(app: &AppHandle, page: &str) {
         .inner_size(560.0, 620.0)
         .resizable(true)
         .maximizable(false)
-        .center();
+        .center()
+        .disable_drag_drop_handler();
 
     if let Ok(win) = builder.build() {
         // Belt-and-braces: the initial page is set via the URL query above, so

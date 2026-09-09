@@ -854,6 +854,7 @@ fn show_loading_window(app: &AppHandle) {
             .resizable(false)
             .maximizable(false)
             .center()
+            .disable_drag_drop_handler()
             .build();
     });
 }

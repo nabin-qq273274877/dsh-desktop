@@ -9,7 +9,7 @@ mod settings;
 #[cfg(windows)]
 mod job_object;
 
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::UpdaterExt;
 
 /// Check for updates via the configured updater endpoints.
@@ -61,6 +61,45 @@ fn get_desktop_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// Create the two startup windows ("loading" and "main") in code instead of
+/// declaring them in `tauri.conf.json`.
+///
+/// Windows created from the config cannot opt out of wry's custom drag-and-drop
+/// handler, and wry's handler only forwards *file* drops — it does not hand an
+/// in-page HTML5 drag back to the WebView2, so HTML5 drag & drop (e.g. dragging
+/// workspace rows to reorder them inside the DSH GUI) silently breaks on
+/// Windows. Calling `.disable_drag_drop_handler()` restores WebView2's native
+/// drop handling, which is required for HTML5 DnD APIs to work. See the tauri
+/// docs on `WebviewWindowBuilder::disable_drag_drop_handler`.
+///
+/// This mirrors the previous `loading` / `main` entries from `tauri.conf.json`
+/// (sizes, visibility, center, decorations), so startup behavior is unchanged.
+fn create_initial_windows(app: &tauri::AppHandle) {
+    let _ = WebviewWindowBuilder::new(
+        app,
+        "loading",
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("DeepSeek Harness Desktop")
+    .inner_size(560.0, 420.0)
+    .resizable(false)
+    .maximizable(false)
+    .center()
+    .decorations(true)
+    .visible(true)
+    .disable_drag_drop_handler()
+    .build();
+
+    let _ = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("DeepSeek Harness")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(900.0, 600.0)
+        .center()
+        .visible(false)
+        .disable_drag_drop_handler()
+        .build();
+}
+
 fn main() {
     // Enforce a single instance on Windows. If another instance is already
     // running (it holds the named mutex), exit immediately — otherwise both
@@ -99,6 +138,10 @@ fn main() {
             changelog::get_changelog
         ])
         .setup(|app| {
+            // Create the loading + main windows up front (config defines none).
+            // Must run before anything below looks up "main".
+            create_initial_windows(app.handle());
+
             // Build the native menu and attach it ONLY to the main window.
             // Loading/tools windows get no menu bar.
             let handle = app.handle().clone();

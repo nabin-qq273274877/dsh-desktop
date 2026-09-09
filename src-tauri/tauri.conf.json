@@ -9,31 +9,7 @@
     "frontendDist": "../src-static"
   },
   "app": {
-    "windows": [
-      {
-        "label": "loading",
-        "title": "DeepSeek Harness Desktop",
-        "width": 560,
-        "height": 420,
-        "resizable": false,
-        "maximizable": false,
-        "center": true,
-        "decorations": true,
-        "visible": true,
-        "url": "index.html"
-      },
-      {
-        "label": "main",
-        "title": "DeepSeek Harness",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
-        "center": true,
-        "visible": false,
-        "url": "index.html"
-      }
-    ],
+    "windows": [],
     "withGlobalTauri": true,
     "security": {
       "csp": null

@@ -18,6 +18,7 @@ const MENU_RUN_CLEAR_CACHE: &str = "run_clear_cache";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
 const MENU_VIEW_OPEN_DATA_DIR: &str = "view_open_data_dir";
 const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
+const MENU_VIEW_OPEN_IN_BROWSER: &str = "view_open_in_browser";
 const MENU_SETTINGS: &str = "settings";
 const MENU_ABOUT_DSH_VERSION: &str = "about_dsh_version";
 const MENU_ABOUT_DESKTOP: &str = "about_desktop";
@@ -71,6 +72,11 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .item(
             &MenuItemBuilder::with_id(MENU_VIEW_DEVTOOLS, "调试工具")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_OPEN_IN_BROWSER, "在浏览器打开")
                 .build(app)?,
         )
         .build()?;
@@ -158,6 +164,10 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         }
         MENU_VIEW_OPEN_DATA_DIR => {
             open_user_data_dir(app);
+            return;
+        }
+        MENU_VIEW_OPEN_IN_BROWSER => {
+            open_current_instance_in_browser();
             return;
         }
         MENU_ABOUT_UPDATE_AVAILABLE => {
@@ -424,6 +434,21 @@ pub fn toggle_devtools(app: &AppHandle) {
     }
 }
 
+/// Open the current DSH instance in the system default browser.
+///
+/// Called from the "查看 > 在浏览器打开" menu item and the tray's
+/// "在浏览器打开" entry. Uses the tokenized web URL of the running instance
+/// (the same URL the main window navigates to) so the browser can authenticate.
+fn open_current_instance_in_browser() {
+    let url = crate::launcher::get_dsh_url();
+    if url.is_empty() {
+        return;
+    }
+    if let Err(e) = crate::launcher::open_url_in_browser(&url) {
+        eprintln!("failed to open DSH in browser: {e}");
+    }
+}
+
 /// Open (or focus) the tools window on the installed-plugin list page.
 ///
 /// Called by the launcher when DSH fails to start due to a plugin conflict, so
@@ -496,6 +521,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
         .item(&MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "查看版本").build(app)?)
         .item(&MenuItemBuilder::with_id(MENU_RUN_INSTALL_PLUGIN, "安装插件").build(app)?)
         .item(&MenuItemBuilder::with_id(MENU_VIEW_LIST_PLUGINS, "插件列表").build(app)?)
+        .item(&MenuItemBuilder::with_id(MENU_VIEW_OPEN_IN_BROWSER, "在浏览器打开").build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id(MENU_RUN_EXPORT_CONFIG, "导出数据").build(app)?)
         .item(&MenuItemBuilder::with_id(MENU_RUN_IMPORT_CONFIG, "导入数据").build(app)?)

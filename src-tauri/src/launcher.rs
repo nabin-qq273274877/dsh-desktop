@@ -314,6 +314,39 @@ pub(crate) fn open_in_file_manager(dir: &std::path::Path) -> Result<(), String> 
     Ok(())
 }
 
+/// Open a URL in the system's default browser.
+///
+/// Used by the "在浏览器打开" menu/tray entry to show the running DSH web UI
+/// outside the embedded window. On Windows a hidden `cmd /c start "" <url>`
+/// (CREATE_NO_WINDOW) is used so no console flashes; macOS uses `open` and
+/// Linux `xdg-open`.
+pub(crate) fn open_url_in_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .map_err(|e| format!("启动浏览器失败: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| format!("failed to open browser: {e}"))?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| format!("failed to open browser: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Idempotently create the whole `<app-data>/dsh-desktop` layout (`dsh-home`,
 /// `store`, `cache`) and return the `dsh-desktop` directory.
 ///

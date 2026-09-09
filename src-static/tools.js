@@ -23,6 +23,10 @@ function showPage(name) {
   if (name === "changelog") loadChangelog();
 }
 
+// Whether the "查看命令" raw-output box on the 已安装插件 page is open.
+// Hidden by default; toggled by the 查看命令 button.
+let pluginRawVisible = false;
+
 function setOutput(el, text, kind = "") {
   if (!el) return;
   el.textContent = text;
@@ -78,8 +82,10 @@ async function refreshPlugins() {
 
   try {
     const out = await invoke("list_plugins");
+    // Always keep the raw command output fresh, but only *show* it when the
+    // user has toggled the "查看命令" box open.
     rawEl.textContent = out;
-    rawEl.hidden = false;
+    rawEl.hidden = !pluginRawVisible;
 
     const plugins = parsePluginList(out);
     listEl.innerHTML = "";
@@ -325,6 +331,16 @@ document.getElementById("btn-install")?.addEventListener("click", async () => {
 });
 
 document.getElementById("btn-refresh")?.addEventListener("click", refreshPlugins);
+
+// "查看命令": toggle the raw `dsh plugin list` output box (shown above the
+// list). Hidden by default; only visible after the user clicks.
+document.getElementById("btn-view-cmd")?.addEventListener("click", () => {
+  const rawEl = document.getElementById("plugin-list-raw");
+  const btn = document.getElementById("btn-view-cmd");
+  pluginRawVisible = !pluginRawVisible;
+  if (rawEl) rawEl.hidden = !pluginRawVisible;
+  if (btn) btn.textContent = pluginRawVisible ? "隐藏命令" : "查看命令";
+});
 
 // "已安装插件"页 → 跳转到"安装插件"页。
 document.getElementById("btn-goto-install")?.addEventListener("click", () => {

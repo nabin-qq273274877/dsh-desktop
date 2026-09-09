@@ -184,6 +184,12 @@ input[type="text"]:focus {
 .output.err { color: #ff7b7b; }
 .output.ok { color: #7be0a3; }
 
+/* Raw `dsh plugin list` output on the 已安装插件 page sits above the list; keep
+   a small gap so it doesn't touch the rows below. */
+#plugin-list-raw {
+  margin-bottom: 12px;
+}
+
 /* ---------- settings ---------- */
 .radio-label {
   display: inline-flex;

@@ -15,6 +15,9 @@ const MENU_RUN_INSTALL_PLUGIN: &str = "run_install_plugin";
 const MENU_RUN_EXPORT_CONFIG: &str = "run_export_config";
 const MENU_RUN_IMPORT_CONFIG: &str = "run_import_config";
 const MENU_RUN_CLEAR_CACHE: &str = "run_clear_cache";
+/// Tray-only top item: shows/focuses the main window (same as a left-click on
+/// the tray icon). Not present in the native menu bar.
+const MENU_OPEN_MAIN: &str = "open_main";
 const MENU_VIEW_LIST_PLUGINS: &str = "view_list_plugins";
 const MENU_VIEW_OPEN_DATA_DIR: &str = "view_open_data_dir";
 const MENU_VIEW_DEVTOOLS: &str = "view_devtools";
@@ -180,6 +183,12 @@ pub fn handle_menu_event(app: &AppHandle, id: &str) {
         MENU_QUIT => {
             // Kill DSH and quit the whole app.
             let _ = crate::launcher::quit_app(app.clone());
+            return;
+        }
+        MENU_OPEN_MAIN => {
+            // Show/focus the main window (same effect as a left-click on the
+            // tray icon).
+            show_main_window(app);
             return;
         }
         _ => {}
@@ -515,16 +524,73 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<tauri::tray::TrayIcon> {
         tray = tray.icon(icon.clone());
     }
 
-    // Right-click menu.
-    let menu = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id(MENU_SETTINGS, "设置").build(app)?)
-        .item(&MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "查看版本").build(app)?)
-        .item(&MenuItemBuilder::with_id(MENU_RUN_INSTALL_PLUGIN, "安装插件").build(app)?)
-        .item(&MenuItemBuilder::with_id(MENU_VIEW_LIST_PLUGINS, "插件列表").build(app)?)
-        .item(&MenuItemBuilder::with_id(MENU_VIEW_OPEN_IN_BROWSER, "在浏览器打开").build(app)?)
+    // Right-click menu. It mirrors the main window's native menus (运行/查看/
+    // 关于 — the same item ids, so clicks route through `handle_menu_event`),
+    // and adds a top "打开主窗口" entry (same effect as a left-click on the icon).
+    let run_menu = SubmenuBuilder::new(app, "运行")
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_INSTALL_PLUGIN, "安装插件…")
+                .build(app)?,
+        )
         .separator()
-        .item(&MenuItemBuilder::with_id(MENU_RUN_EXPORT_CONFIG, "导出数据").build(app)?)
-        .item(&MenuItemBuilder::with_id(MENU_RUN_IMPORT_CONFIG, "导入数据").build(app)?)
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_EXPORT_CONFIG, "导出配置…")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_IMPORT_CONFIG, "导入配置…")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_RUN_CLEAR_CACHE, "清除 DSH 缓存…")
+                .build(app)?,
+        )
+        .build()?;
+
+    let view_menu = SubmenuBuilder::new(app, "查看")
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_LIST_PLUGINS, "已安装插件")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_OPEN_DATA_DIR, "数据目录")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_DEVTOOLS, "调试工具")
+                .build(app)?,
+        )
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_VIEW_OPEN_IN_BROWSER, "在浏览器打开")
+                .build(app)?,
+        )
+        .build()?;
+
+    let about_menu = SubmenuBuilder::new(app, "关于")
+        .item(&MenuItemBuilder::with_id(MENU_SETTINGS, "设置…").build(app)?)
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(MENU_ABOUT_CHANGELOG, "更新日志…")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(MENU_ABOUT_DSH_VERSION, "DeepSeek Harness 版本")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(MENU_ABOUT_DESKTOP, "关于 DeepSeek Harness Desktop")
+                .build(app)?,
+        )
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&MenuItemBuilder::with_id(MENU_OPEN_MAIN, "打开主窗口").build(app)?)
+        .separator()
+        .items(&[&run_menu, &view_menu, &about_menu])
         .separator()
         .item(&MenuItemBuilder::with_id(MENU_QUIT, "退出").build(app)?)
         .build()?;

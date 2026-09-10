@@ -185,9 +185,13 @@ input[type="text"]:focus {
 .output.ok { color: #7be0a3; }
 
 /* Raw `dsh plugin list` output on the 已安装插件 page sits above the list; keep
-   a small gap so it doesn't touch the rows below. */
+   a small gap so it doesn't touch the rows below.
+   The shared `.output` rule caps height at 320px with an inner scrollbar, which
+   made a longer plugin list look truncated after clicking 查看命令. This box is
+   shown only on demand, so let it grow to its full height instead. */
 #plugin-list-raw {
   margin-bottom: 12px;
+  max-height: none;
 }
 
 /* ---------- settings ---------- */

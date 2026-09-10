@@ -20,6 +20,16 @@ pub struct ChangelogEntry {
 pub fn entries() -> Vec<ChangelogEntry> {
     vec![
         ChangelogEntry {
+            version: "0.3.0".to_string(),
+            title: "0.3.0".to_string(),
+            changes: vec![
+                "托盘右键菜单改为与主窗口菜单一致:完整覆盖「运行/查看/关于」各级子菜单,并在顶部新增「打开主窗口」(与单击托盘图标效果相同)。".to_string(),
+                "「查看」菜单与托盘菜单新增「在浏览器打开」:用系统默认浏览器打开当前 DSH 实例,便于在完整浏览器中使用 GUI。".to_string(),
+                "「已安装插件」列表加载大幅提速(约 40 倍):改为直接读取本地 profile 信息,不再每次启动 pnpm 子进程,打开列表不再等待数秒。".to_string(),
+                "修复 Windows 下 HTML5 页内拖拽失效的问题(如工作区行拖拽排序无法使用),现已恢复正常。".to_string(),
+            ],
+        },
+        ChangelogEntry {
             version: "0.2.6".to_string(),
             title: "0.2.6".to_string(),
             changes: vec![

@@ -1,6 +1,6 @@
 [package]
 name = "dsh-desktop"
-version = "0.2.6"
+version = "0.3.0"
 description = "A desktop launcher for DeepSeek Harness (DSH)"
 authors = ["you"]
 edition = "2021"

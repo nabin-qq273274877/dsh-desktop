@@ -1,3 +1,14 @@
+> [!WARNING]
+> ## 📢 This project is no longer maintained
+>
+> **DSH now ships an official desktop app, so this project will receive no further updates and will be taken offline (archived/removed) in the near future.**
+>
+> - Please use the official desktop app instead: [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness)
+> - This repository is kept for archival reference only. Existing Release installers remain downloadable, but **no bug fixes and no new releases** will be provided.
+> - Thanks to everyone who used and supported it.
+>
+> Notice date: 2026-09-25
+
 # DeepSeek Harness Desktop
 
 **Desktop Launcher for DeepSeek Harness**

@@ -1,3 +1,14 @@
+> [!WARNING]
+> ## 📢 项目已停止维护
+>
+> **DSH 官方现已提供桌面端支持,因此本项目后续不再更新,并将在近期下线(归档/删除仓库)。**
+>
+> - 请直接使用官方桌面端:[DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness)
+> - 本仓库仅作存档保留,已有 Release 安装包仍可下载,但**不再修复问题、不再发布新版本**。
+> - 感谢各位的使用与支持。
+>
+> 通知日期:2026-09-25
+
 # DeepSeek Harness Desktop
 
 **DeepSeek Harness 桌面启动器**

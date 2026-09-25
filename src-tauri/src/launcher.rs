@@ -16,6 +16,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// The host DSH binds to. We bind to loopback only for local use.
 const DSH_HOST: &str = "127.0.0.1";
+/// Host the main webview is pointed at. WKWebView drops/ignores cookies set for
+/// an IP-address domain (127.0.0.1), so we present DSH through `localhost`,
+/// which WebKit treats as a normal host and sends cookies for.
+const NAV_HOST: &str = "localhost";
 
 /// Global handle to the running child process so we can kill it on exit.
 static CHILD: Mutex<Option<Child>> = Mutex::new(None);
@@ -504,6 +508,60 @@ fn trace_launch(app: &AppHandle, msg: &str) {
     }
 }
 
+/// Pre-authenticate the main webview against DSH before it navigates.
+///
+/// DSH's tokenized web flow authenticates a browser by answering
+/// `GET <root>/?token=…` with a `303` plus a `Set-Cookie` session cookie, and
+/// only serves the UI once that cookie is presented on `/`. Windows WebView2
+/// stores the redirect cookie correctly, but macOS WKWebView drops it — a
+/// documented WebKit redirect-cookie issue — so the main window lands on DSH's
+/// `401 "dsh web authentication required"` page even though the backend is
+/// healthy. We sidestep WebKit by performing the token exchange here in Rust
+/// (reqwest, redirect disabled) and returning the `dsh-auth-*` session cookie as
+/// `name=value`. WKWebView will not send cookies injected via the native cookie
+/// store (`set_cookie`) on subsequent requests, so the caller plants this cookie
+/// from JS (`document.cookie`) on the DSH origin, which WebKit does honour. A
+/// no-op returning `None` for older token-less DSH builds.
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn pre_inject_session_cookie(main_win: &tauri::WebviewWindow, url: &str) -> Option<String> {
+    let app = main_win.app_handle();
+    trace_launch(app, &format!("pre_inject: enter url={url} has_token={}", has_token_url()));
+    if !has_token_url() {
+        trace_launch(app, "pre_inject: no token url, skip");
+        return None;
+    }
+    // The token exchange answers 303 + Set-Cookie; we want the raw header, so
+    // never follow the redirect (following it re-requests the token-less root
+    // and gets a 401).
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    else {
+        return None;
+    };
+    let Ok(resp) = client.get(url).send() else {
+        return None;
+    };
+    use tauri::webview::cookie::Cookie;
+    for value in resp.headers().get_all(reqwest::header::SET_COOKIE) {
+        let Ok(raw) = value.to_str() else { continue };
+        let Ok(c) = Cookie::parse(raw.to_string()) else { continue };
+        if c.name().is_empty() {
+            continue;
+        }
+        // DSH's session cookie value is a JWT (alphanumeric, `.`, `-`, `_`), safe
+        // to embed directly in a `document.cookie` assignment. We present DSH
+        // through `NAV_HOST` (localhost): WKWebView also ignores IP-address-host
+        // cookies, and localhost is treated as a normal host.
+        let cookie_str = format!("{}={}", c.name(), c.value());
+        trace_launch(app, &format!("pre_inject: cookie {}", &cookie_str[..cookie_str.len().min(40)]));
+        return Some(cookie_str);
+    }
+    trace_launch(app, "pre_inject: no Set-Cookie header");
+    None
+}
+
 /// Notify the frontend that DSH is ready and open the main window.
 ///
 /// We navigate the "main" window directly to the DSH URL (no iframe), then show
@@ -511,11 +569,53 @@ fn trace_launch(app: &AppHandle, msg: &str) {
 fn emit_ready(app: &AppHandle) {
     let port = CURRENT_PORT.lock().unwrap().unwrap_or(0);
     let url = dsh_url(port);
+    trace_launch(app, &format!("emit_ready: url={url} has_token={}", has_token_url()));
 
     // Navigate and show the main window directly.
     if let Some(main_win) = app.get_webview_window("main") {
-        if let Ok(parsed) = url::Url::parse(&url) {
-            let _ = main_win.navigate(parsed);
+        #[cfg(target_os = "windows")]
+        {
+            // Windows WebView2 correctly persists the session cookie DSH sets
+            // during the 303 token-exchange redirect, so just navigate to the
+            // exact token URL as before.
+            if let Ok(parsed) = url::Url::parse(&url) {
+                let _ = main_win.navigate(parsed);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // macOS WKWebView drops the session cookie DSH sets during its 303
+            // token-exchange redirect, and refuses to send cookies injected via
+            // the native cookie store (`set_cookie`) — either way the window
+            // lands on DSH's 401 page. So we perform the token exchange in Rust,
+            // load the DSH origin once (which 401s but establishes the origin in
+            // WebKit), plant the session cookie from JS via `document.cookie`
+            // (the path WebKit reliably honours), then reload to get the SPA.
+            let nav_url = format!("http://{NAV_HOST}:{port}/");
+            let cookie_opt = pre_inject_session_cookie(&main_win, &url);
+            let nav_res: Result<(), String> = url::Url::parse(&nav_url)
+                .map_err(|e| e.to_string())
+                .and_then(|p| main_win.navigate(p).map_err(|e| e.to_string()));
+            trace_launch(&main_win.app_handle(), &format!("emit_ready: first navigate -> {nav_res:?}"));
+            let mw = main_win.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+                if let Some(cookie) = cookie_opt {
+                    let js = format!(
+                        "document.cookie = '{cookie}; path=/; max-age=2592000; SameSite=Strict';"
+                    );
+                    let r = mw.eval(&js);
+                    trace_launch(&mw.app_handle(), &format!("emit_ready: eval cookie -> {r:?}"));
+                    let _ = mw.eval("window.__dshUrl = location.href;");
+                } else {
+                    trace_launch(&mw.app_handle(), "emit_ready: no cookie to plant (legacy DSH)");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                let nav2: Result<(), String> = url::Url::parse(&nav_url)
+                    .map_err(|e| e.to_string())
+                    .and_then(|p| mw.navigate(p).map_err(|e| e.to_string()));
+                trace_launch(&mw.app_handle(), &format!("emit_ready: reload -> {nav2:?}"));
+            });
         }
         let _ = main_win.show();
         let _ = main_win.set_focus();
@@ -640,6 +740,20 @@ fn spawn_dsh(app: &AppHandle) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         // CREATE_NO_WINDOW: run without a console window.
         cmd.creation_flags(0x0800_0000);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                // Own process group so a single `kill(-pid)` reaps the whole
+                // tree (pnpm + the DSH node server) on quit instead of
+                // orphaning the DSH server.
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
     }
 
     let mut child = cmd.spawn().map_err(|e| {
@@ -1133,6 +1247,23 @@ fn supervise(app: AppHandle, gen: u64) {
     }
 }
 
+/// Terminate the DSH child and its whole descendant tree.
+///
+/// On Unix the child was started in its own process group (see `spawn_dsh`),
+/// so killing the group `-pid` reaps both the pnpm wrapper and the DSH node
+/// server it spawned. Without this, quitting the app orphans the DSH server
+/// (it keeps serving the old port/token indefinitely). Windows uses
+/// `taskkill /T` (Job Object), which already covers the whole tree.
+#[cfg(not(target_os = "windows"))]
+fn kill_child_tree(child: &mut Child) {
+    let pid = child.id();
+    unsafe {
+        let _ = libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.try_wait();
+}
+
 /// Kill the DSH child process (and its descendants) if still running.
 ///
 /// This is intentionally non-blocking: it must be callable from window-close
@@ -1161,8 +1292,7 @@ pub fn kill_dsh() {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = child.kill();
-            let _ = child.try_wait();
+            kill_child_tree(&mut child);
         }
     }
     *CURRENT_PORT.lock().unwrap() = None;
@@ -1183,11 +1313,11 @@ fn kill_and_wait(timeout: std::time::Duration) {
     let Some(mut child) = CHILD.lock().unwrap().take() else {
         return;
     };
-    let pid = child.id();
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         // Kill the whole process tree (DSH spawns cmd.exe / nested node).
+        let pid = child.id();
         let _ = Command::new("taskkill")
             .args(["/T", "/F", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
@@ -1197,7 +1327,7 @@ fn kill_and_wait(timeout: std::time::Duration) {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = child.kill();
+        kill_child_tree(&mut child);
     }
     let deadline = std::time::Instant::now() + timeout;
     loop {

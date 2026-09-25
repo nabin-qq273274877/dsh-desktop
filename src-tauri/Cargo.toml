@@ -28,3 +28,8 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_JobObjects",
   "Win32_System_Threading",
 ] }
+
+# Unix-only: `setpgid` to place the DSH child in its own process group so a
+# `kill(-pid)` reaps the whole tree (pnpm + the DSH node server) on quit.
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+libc = "0.2"
